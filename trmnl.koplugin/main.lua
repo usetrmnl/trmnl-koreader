@@ -17,6 +17,7 @@ local MultiInputDialog = require("ui/widget/multiinputdialog")
 local NetworkMgr = require("ui/network/manager")
 local RenderImage = require("ui/renderimage")
 local Screen = Device.screen
+local Input = Device.input
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local logger = require("logger")
@@ -407,6 +408,14 @@ function TrmnlDisplay:displayImage(image_path)
         return true
     end
 
+    -- Add key press handler for non-touch devices
+    self.image_widget.onAnyKeyPressed = function()
+        logger.info("TRMNL: Closing image via button press")
+        UIManager:close(self.image_widget)
+        self.image_widget = nil
+        return true
+    end
+
     -- Register tap gesture
     if Device:isTouchDevice() then
         self.image_widget.ges_events = {
@@ -420,6 +429,13 @@ function TrmnlDisplay:displayImage(image_path)
                     }
                 }
             }
+        }
+    end
+
+    -- Register key events for non-touch devices
+    if Device:hasKeys() then
+        self.image_widget.key_events = {
+            AnyKeyPressed = { { Input.group.Any } }
         }
     end
 

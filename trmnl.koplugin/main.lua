@@ -102,6 +102,8 @@ TrmnlDisplay.default_settings = {
     use_server_refresh_rate = false,
     refresh_type = "ui",
     show_notifications = true,
+    mac_header_name = nil,  -- Header name for MAC address (configurable for BYOS)
+    mac_address = nil,  -- Manual MAC address override (nil = auto-detect)
 }
 
 --[[--
@@ -190,6 +192,78 @@ function TrmnlDisplay:loadApiKeyFromFile()
     return nil
 end
 
+--[[--
+Get MAC address of the wireless network interface.
+
+Uses FFI (Foreign Function Interface) to call POSIX system calls:
+- getifaddrs(): Enumerate all network interfaces
+- ioctl(SIOCGIWNAME): Check if interface is wireless
+- ioctl(SIOCGIFHWADDR): Get hardware (MAC) address
+
+@treturn string|nil MAC address (format: "XX:XX:XX:XX:XX:XX") or nil if not available
+]]
+function TrmnlDisplay:getMacAddress()
+    local ffi = require("ffi")
+    local C = ffi.C
+    require("ffi/posix_h")
+
+    -- Create socket for ioctl calls
+    local socket = C.socket(C.PF_INET, C.SOCK_DGRAM, C.IPPROTO_IP)
+    if socket == -1 then
+        logger.warn("TRMNL: Could not create socket for MAC address retrieval")
+        return nil
+    end
+
+    -- Get network interfaces
+    local ifaddr = ffi.new("struct ifaddrs *[1]")
+    if C.getifaddrs(ifaddr) == -1 then
+        C.close(socket)
+        logger.warn("TRMNL: Could not get network interfaces")
+        return nil
+    end
+
+    local mac_address = nil
+    local ifa = ifaddr[0]
+
+    -- Loop through interfaces to find wireless one
+    while ifa ~= nil do
+        if ifa.ifa_addr ~= nil and
+           bit.band(ifa.ifa_flags, C.IFF_UP) ~= 0 and
+           bit.band(ifa.ifa_flags, C.IFF_LOOPBACK) == 0 then
+
+            -- Check if wireless interface
+            local iwr = ffi.new("struct iwreq")
+            ffi.copy(iwr.ifr_ifrn.ifrn_name, ifa.ifa_name, C.IFNAMSIZ)
+            if C.ioctl(socket, C.SIOCGIWNAME, iwr) ~= -1 then
+                -- This is a wireless interface, get its MAC address
+                local ifr = ffi.new("struct ifreq")
+                ffi.copy(ifr.ifr_ifrn.ifrn_name, ifa.ifa_name, C.IFNAMSIZ)
+                if C.ioctl(socket, C.SIOCGIFHWADDR, ifr) ~= -1 then
+                    mac_address = string.format("%02X:%02X:%02X:%02X:%02X:%02X",
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[0], 0xFF),
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[1], 0xFF),
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[2], 0xFF),
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[3], 0xFF),
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[4], 0xFF),
+                        bit.band(ifr.ifr_ifru.ifru_hwaddr.sa_data[5], 0xFF))
+                    logger.info("TRMNL: Auto-detected MAC address:", mac_address)
+                    break -- Found wireless interface MAC
+                end
+            end
+        end
+        ifa = ifa.ifa_next
+    end
+
+    C.freeifaddrs(ifaddr[0])
+    C.close(socket)
+
+    if not mac_address then
+        logger.info("TRMNL: No wireless interface MAC address found")
+    end
+
+    return mac_address
+end
+
 --============================================================================--
 -- Network and API Methods
 --
@@ -242,6 +316,22 @@ function TrmnlDisplay:fetchScreenMetadata()
     local png_width = tostring(Screen:getWidth())
     local png_height = tostring(Screen:getHeight())
 
+    -- Get MAC address: manual entry wins (if not empty), otherwise auto-detect
+    local mac_address
+    local manual_mac = self.settings.mac_address
+    if manual_mac and manual_mac ~= "" then
+        -- Manual MAC provided - use it
+        mac_address = manual_mac
+        logger.dbg("TRMNL: Using manual MAC address:", mac_address)
+    else
+        -- No manual MAC or empty string - try auto-detection
+        mac_address = self:getMacAddress() or "00:00:00:00:00:00"
+        logger.dbg("TRMNL: Using MAC address:", mac_address)
+    end
+
+    -- Get custom header name for MAC address
+    local mac_header_name = self.settings.mac_header_name or "ID"
+
     logger.info("TRMNL: Fetching screen from", request_url)
     logger.dbg("TRMNL: Screen dimensions:", png_width, "x", png_height)
 
@@ -255,6 +345,7 @@ function TrmnlDisplay:fetchScreenMetadata()
             ["png-width"] = png_width,                 -- Screen width in pixels
             ["png-height"] = png_height,               -- Screen height in pixels
             ["rssi"] = "0",                            -- WiFi signal strength (TODO: implement)
+            [mac_header_name] = mac_address,           -- MAC address with custom header name
             ["User-Agent"] = self.settings.user_agent, -- Plugin identification
         },
         sink = ltn12.sink.table(sink),                 -- Response body stored in 'sink' table
@@ -984,6 +1075,12 @@ Uses MultiInputDialog which provides multiple input fields in one dialog:
 Fields are retrieved via getFields() which returns array of values in order.
 ]]
 function TrmnlDisplay:showConfigDialog()
+    -- Get auto-detected MAC to show as placeholder/hint
+    local auto_mac = self:getMacAddress() or "Auto-detect unavailable"
+    local mac_hint = auto_mac ~= "Auto-detect unavailable"
+        and _("MAC address (leave empty to use:") .. auto_mac .. ")"
+        or _("MAC address (auto-detect unavailable)")
+
     self.config_dialog = MultiInputDialog:new {
         title = _("Configure TRMNL"),
         fields = {
@@ -1003,6 +1100,16 @@ function TrmnlDisplay:showConfigDialog()
                 hint = _("Refresh interval (seconds)"),
                 input_type = "number",
             },
+            {
+                text = self.settings.mac_header_name or "MAC address",
+                hint = _("MAC address header name (e.g. ID)"),
+                input_type = "string",
+            },
+            {
+                text = self.settings.mac_address or "",
+                hint = mac_hint,
+                input_type = "string",
+            },
         },
         buttons = {
             {
@@ -1021,6 +1128,8 @@ function TrmnlDisplay:showConfigDialog()
                         self.settings.api_key = fields[1]
                         self.settings.base_url = fields[2]
                         self.settings.refresh_interval = tonumber(fields[3]) or 1800
+                        self.settings.mac_header_name = fields[4]
+                        self.settings.mac_address = fields[5] ~= "" and fields[5] or nil
                         self:saveSettings()
                         UIManager:close(self.config_dialog)
                         self:showInfo("TRMNL settings saved.")

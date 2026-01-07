@@ -20,6 +20,7 @@ local Screen = Device.screen
 local Input = Device.input
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Dispatcher = require("dispatcher")
 local logger = require("logger")
 local util = require("util")
 local _ = require("gettext")
@@ -127,6 +128,8 @@ function TrmnlDisplay:init()
     self.refresh_task = function()
         self:fetchAndDisplay()
     end
+
+    Dispatcher:registerAction("trmnl_fetch_now", {category="none", event="TrmnlFetch", title=_("TRMNL: Fetch now"), general=true})
 
     self.ui.menu:registerToMainMenu(self)
 
@@ -1179,6 +1182,10 @@ function TrmnlDisplay:addToMainMenu(menu_items)
             },
         }
     }
+end
+
+function TrmnlDisplay:onTrmnlFetch()
+    self:fetchAndDisplay(true)
 end
 
 return TrmnlDisplay

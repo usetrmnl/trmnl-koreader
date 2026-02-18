@@ -20,6 +20,7 @@ local Screen = Device.screen
 local Input = Device.input
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Dispatcher = require("dispatcher")
 local logger = require("logger")
 local util = require("util")
 local _ = require("gettext")
@@ -71,6 +72,7 @@ local TrmnlDisplay = WidgetContainer:extend {
     refresh_task = nil,
     auto_refresh_enabled = false,
     auto_refresh_scheduled = false,
+    interactive_mode = false,
     image_widget = nil,
     last_image_path = nil,
     last_image_filename = nil,
@@ -127,6 +129,9 @@ function TrmnlDisplay:init()
     self.refresh_task = function()
         self:fetchAndDisplay()
     end
+
+    Dispatcher:registerAction("trmnl_fetch_now", {category="none", event="TrmnlFetch", title=_("TRMNL: Fetch now"), general=true})
+    Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start (interactive)"), general=true})
 
     self.ui.menu:registerToMainMenu(self)
 
@@ -403,6 +408,11 @@ function TrmnlDisplay:displayImage(image_path)
     -- Add tap handler to close the image
     self.image_widget.onTapClose = function()
         logger.info("TRMNL: Closing image via tap")
+        if self.interactive_mode then
+            logger.info("TRMNL: Exiting interactive mode")
+            self.interactive_mode = false
+            self:stopAutoRefresh()
+        end
         UIManager:close(self.image_widget)
         self.image_widget = nil
         return true
@@ -411,6 +421,11 @@ function TrmnlDisplay:displayImage(image_path)
     -- Add key press handler for non-touch devices
     self.image_widget.onAnyKeyPressed = function()
         logger.info("TRMNL: Closing image via button press")
+        if self.interactive_mode then
+            logger.info("TRMNL: Exiting interactive mode")
+            self.interactive_mode = false
+            self:stopAutoRefresh()
+        end
         UIManager:close(self.image_widget)
         self.image_widget = nil
         return true
@@ -1094,6 +1109,15 @@ function TrmnlDisplay:createFetchMenuItem()
     }
 end
 
+function TrmnlDisplay:createStartInteractiveMenuItem()
+    return {
+        text = _("Start TRMNL (interactive)"),
+        callback = function()
+            self:onTrmnlStartInteractive()
+        end
+    }
+end
+
 function TrmnlDisplay:createConfigMenuItem()
     return {
         text = _("Configure TRMNL"),
@@ -1163,6 +1187,7 @@ function TrmnlDisplay:addToMainMenu(menu_items)
         text = _("TRMNL Display"),
         sorting_hint = "tools",
         sub_item_table = {
+            self:createStartInteractiveMenuItem(),
             self:createFetchMenuItem(),
             self:createConfigMenuItem(),
             self:createAutoRefreshToggle(),
@@ -1179,6 +1204,23 @@ function TrmnlDisplay:addToMainMenu(menu_items)
             },
         }
     }
+end
+
+function TrmnlDisplay:onTrmnlFetch()
+    self:fetchAndDisplay(true)
+end
+
+function TrmnlDisplay:onTrmnlStartInteractive()
+    logger.info("TRMNL: Starting interactive mode")
+    -- If auto-refresh is already enabled, we just set the flag but don't
+    -- touch the persistent setting.
+    self.interactive_mode = true
+    if not self.auto_refresh_enabled then
+        self:startAutoRefresh()
+    else
+        -- Already running, but ensure image is displayed
+        self:fetchAndDisplay(true)
+    end
 end
 
 return TrmnlDisplay

@@ -85,4 +85,4 @@ Watch terminal for errors and log output.
 - **[main.lua](trmnl.koplugin/main.lua)** - Read for implementation patterns
 - [DEVELOPMENT.md](DEVELOPMENT.md) - Architecture and setup
 - [KOReader Plugin Wiki](https://github.com/koreader/koreader/wiki/Plugin-Development)
-- [TRMNL API Docs](https://usetrmnl.com/developers)
+- [TRMNL API Docs](https://trmnl.com/developers)

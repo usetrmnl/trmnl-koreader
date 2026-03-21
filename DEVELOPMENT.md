@@ -100,6 +100,6 @@ See [KOReader build docs](https://github.com/koreader/koreader/blob/master/doc/B
 ## Resources
 
 - **[main.lua](trmnl.koplugin/main.lua)** - Plugin implementation
-- [TRMNL API Docs](https://usetrmnl.com/developers) - Official API reference
+- [TRMNL API Docs](https://trmnl.com/developers) - Official API reference
 - [KOReader Plugin Dev Wiki](https://github.com/koreader/koreader/wiki/Plugin-Development)
 - [Lua 5.1 Reference](https://www.lua.org/manual/5.1/)

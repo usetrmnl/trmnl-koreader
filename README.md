@@ -23,13 +23,13 @@ A spiritual successor to the [TRMNL Kindle Script](https://github.com/usetrmnl/t
 
 - KOReader-compatible device with [KOReader](https://github.com/koreader/koreader) installed
   - Kindle requires jailbreaking: [instructions](https://github.com/usetrmnl/trmnl-kindle)
-- TRMNL [BYOD license](https://shop.usetrmnl.com/products/byod) or [BYOD/S setup](https://docs.usetrmnl.com/go/diy/byod-s)
+- TRMNL [BYOD license](https://shop.trmnl.com/products/byod) or [BYOD/S setup](https://docs.trmnl.com/go/diy/byod-s)
 
 ## Quick Start
 
 ### 1. Register Device
 
-1. Log in to [usetrmnl.com](https://usetrmnl.com)
+1. Log in to [trmnl.com](https://trmnl.com)
 2. Click gear icon (⚙️) → BYOD device settings
 3. Select your device model and add MAC address (find in KOReader: **Menu → Network → Info**)
 
@@ -71,7 +71,7 @@ Access via **Tools → TRMNL Display → Configure TRMNL**
 **"API request failed (401/403)"**
 
 - Verify API key in settings
-- Ensure device is registered at usetrmnl.com
+- Ensure device is registered at trmnl.com
 - Check BYOD license is active
 
 **"Failed to reach TRMNL API"**
@@ -92,7 +92,7 @@ Access via **Tools → TRMNL Display → Configure TRMNL**
 - **[DEVELOPMENT.md](DEVELOPMENT.md)** - Architecture, API details, development setup
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Code style, contribution workflow
 - **[main.lua](trmnl.koplugin/main.lua)** - Plugin implementation
-- **[TRMNL API Docs](https://usetrmnl.com/developers)** - Official API reference
+- **[TRMNL API Docs](https://trmnl.com/developers)** - Official API reference
 
 ---
 

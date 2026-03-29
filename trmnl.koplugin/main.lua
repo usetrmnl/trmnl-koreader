@@ -210,7 +210,7 @@ Fetch screen metadata from TRMNL API.
 
 Makes HTTP GET request to /api/display endpoint with headers:
 - access-token: User's API key
-- battery-voltage: Device battery percentage
+- percent-charged: Device battery percentage
 - png-width/png-height: Screen dimensions in pixels
 - rssi: WiFi signal strength (hardcoded to 0 for now)
 - User-Agent: Plugin version string
@@ -236,10 +236,10 @@ function TrmnlDisplay:fetchScreenMetadata()
     -- Get device information for API headers
     -- Device:hasBattery() checks if device has battery capability
     -- Device:getPowerDevice() returns power device object with getCapacity() method
-    local battery_voltage = "0"
+    local percent_charged = "0"
     if Device:hasBattery() then
         local powerd = Device:getPowerDevice()
-        battery_voltage = tostring(powerd:getCapacity()) -- Returns 0-100 percentage
+        percent_charged = tostring(powerd:getCapacity()) -- Returns 0-100 percentage
     end
 
     -- Screen:getWidth()/getHeight() return pixel dimensions
@@ -256,7 +256,7 @@ function TrmnlDisplay:fetchScreenMetadata()
         method = "GET",
         headers = {
             ["access-token"] = self.settings.api_key,  -- TRMNL API authentication
-            ["battery-voltage"] = battery_voltage,     -- Device battery level
+            ["percent-charged"] = percent_charged,     -- Device battery level
             ["png-width"] = png_width,                 -- Screen width in pixels
             ["png-height"] = png_height,               -- Screen height in pixels
             ["rssi"] = "0",                            -- WiFi signal strength (TODO: implement)

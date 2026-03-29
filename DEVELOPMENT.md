@@ -50,7 +50,7 @@ GET https://trmnl.app/api/display
 | Header | Description | Example |
 |--------|-------------|---------|
 | `access-token` | User's API key | `abc123...` |
-| `battery-voltage` | Battery % (0-100) | `85` |
+| `percent-charged` | Battery % (0-100) | `85` |
 | `png-width` / `png-height` | Screen dimensions | `1448` / `1072` |
 | `rssi` | WiFi signal strength | `0` (TODO) |
 

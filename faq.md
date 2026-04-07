@@ -1,5 +1,12 @@
 # Frequently Asked Questions
 
+This FAQ answers four common questions. It describes how to:
+
+1. Install the plugin
+2. Configure the plugin
+3. Run the plugin
+4. Extend battery runtime
+
 ## How do I install this plugin in KOReader?
 
 1. Replace the text in `trmnl.koplugin/apikey.txt` with your API key.
@@ -40,7 +47,7 @@ To stop the plugin, tap the display. To restart it after auto-refresh has been e
 
 If **Use server refresh interval** is enabled, the server-provided `refresh_rate` controls update timing. Otherwise, the device's local **Refresh Interval** setting is used.
 
-## What can I do to extend battery life?
+## What can I do to extend battery runtime?
 
 - Set **Settings -> Frontlight** to zero.
 - Set the following in KOReader under **Settings -> Network**:

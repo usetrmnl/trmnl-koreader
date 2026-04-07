@@ -26,7 +26,10 @@ Recommended workflow: enable **Use server refresh interval** so you can adjust t
 
 ## How do I run the plugin to turn my Kindle into a TRMNL?
 
-In KOReader **Settings -> Device**, disable **Auto suspend timeout** so the device does not go to sleep while it is acting as a dashboard.
+In KOReader, make sure sleep prevention is enabled so the device stays awake while acting as a dashboard. I changed two settings:
+
+1. **Tools -> More tools -> Keep alive** (enable it).
+2. **Settings -> Device -> Auto suspend timeout** (disable it).
 
 Once configured, open **Tools -> TRMNL Display** and:
 
@@ -35,10 +38,11 @@ Once configured, open **Tools -> TRMNL Display** and:
 
 To stop the plugin, tap the display. To restart it after auto-refresh has been enabled, use **Start TRMNL (interactive)**.
 
-If **Use server refresh interval** is enabled, the server-provided `refresh_rate` controls update timing; otherwise, the device's local **Refresh Interval** setting is used.
+If **Use server refresh interval** is enabled, the server-provided `refresh_rate` controls update timing. Otherwise, the device's local **Refresh Interval** setting is used.
 
 ## What can I do to extend battery life?
 
+- Set **Settings -> Frontlight** to zero.
 - Set the following in KOReader under **Settings -> Network**:
   - Uncheck **Wi-Fi connection** (do not keep Wi-Fi permanently on).
   - **Action when Wi-Fi is off**: `turn on`

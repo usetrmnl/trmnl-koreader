@@ -241,6 +241,28 @@ function TrmnlDisplay:getMacAddress()
     return nil
 end
 
+--[[--
+Read the Wi-Fi signal level from the kernel's wireless statistics.
+
+@treturn number|nil Signal level in dBm, or nil when unknown
+]]
+function TrmnlDisplay:getRssi(path)
+    local file = io.open(path or "/proc/net/wireless", "r")
+    if not file then
+        return nil
+    end
+    local stats = file:read("*a")
+    file:close()
+
+    -- Columns after the interface name: status, link quality, level, noise.
+    local level = tonumber(stats:match("%w+:%s+%x+%s+[%d.]+%s+(%-?%d+)"))
+    -- NOTE: some drivers report a positive quality figure here instead of dBm.
+    if level and level < 0 then
+        return level
+    end
+    return nil
+end
+
 --============================================================================--
 -- Network and API Methods
 --
@@ -258,7 +280,8 @@ Makes HTTP GET request to /api/display endpoint with headers:
 - access-token: User's API key
 - percent-charged: Device battery percentage
 - png-width/png-height: Screen dimensions in pixels
-- rssi: WiFi signal strength (hardcoded to 0 for now)
+- rssi: WiFi signal strength in dBm, when known
+- battery-charging: whether the device is charging
 - User-Agent: Plugin version string
 
 @treturn table|nil Decoded JSON response table, or nil on error
@@ -283,10 +306,13 @@ function TrmnlDisplay:fetchScreenMetadata()
     -- Device:hasBattery() checks if device has battery capability
     -- Device:getPowerDevice() returns power device object with getCapacity() method
     local percent_charged = "0"
+    local battery_charging
     if Device:hasBattery() then
         local powerd = Device:getPowerDevice()
         percent_charged = tostring(powerd:getCapacity()) -- Returns 0-100 percentage
+        battery_charging = tostring(powerd:isCharging())
     end
+    local rssi = self:getRssi()
 
     -- Screen:getWidth()/getHeight() return pixel dimensions
     -- TRMNL uses this to generate appropriately sized images
@@ -323,7 +349,8 @@ function TrmnlDisplay:fetchScreenMetadata()
             ["percent-charged"] = percent_charged,     -- Device battery level
             ["png-width"] = png_width,                 -- Screen width in pixels
             ["png-height"] = png_height,               -- Screen height in pixels
-            ["rssi"] = "0",                            -- WiFi signal strength (TODO: implement)
+            ["battery-charging"] = battery_charging,
+            ["rssi"] = rssi and tostring(rssi),        -- Omitted when unknown; the server reads 0 as full strength
             [mac_header_name] = mac_address,           -- MAC address with custom header name
             ["User-Agent"] = self.settings.user_agent, -- Plugin identification
         },

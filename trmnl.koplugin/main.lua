@@ -256,7 +256,10 @@ function TrmnlDisplay:getRssi(path)
 
     -- Columns after the interface name: status, link quality, level, noise.
     local level = tonumber(stats:match("%w+:%s+%x+%s+[%d.]+%s+(%-?%d+)"))
-    -- NOTE: some drivers report a positive quality figure here instead of dBm.
+    -- NOTE: older drivers (Kindle PW1) report dBm as an unsigned byte, which iwconfig maps the same way.
+    if level and level >= 64 then
+        level = level - 256
+    end
     if level and level < 0 then
         return level
     end

@@ -1,0 +1,39 @@
+name: Bug report
+description: The plugin does something wrong on your device
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device and firmware
+      placeholder: Kindle Paperwhite 4, firmware 5.16.2.1.1
+    validations:
+      required: true
+  - type: input
+    id: koreader
+    attributes:
+      label: KOReader version
+      description: Menu → Help → About
+      placeholder: v2026.07.1
+    validations:
+      required: true
+  - type: input
+    id: server
+    attributes:
+      label: Server
+      placeholder: trmnl.com, or your own server (Terminus, Larapaper, ...)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what you expected
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: The lines containing "TRMNL" from koreader/crash.log, around when it went wrong.
+      render: text
+    validations:
+      required: true

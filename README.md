@@ -64,6 +64,7 @@ Also in the **TRMNL Display** menu:
 - **Use server refresh interval** — let the server's `refresh_rate` override your local interval. Recommended, since you can then retune timing from the dashboard without touching the device.
 - **E-ink refresh type** — UI (balanced), Full (best quality), Flash UI, or Partial (fastest)
 - **Dashboard gestures** — **Tap closes the screen** (default), or **Hold closes, tap fetches a new screen**
+- **Page-turn buttons** — on devices that have them, a page-turn button fetches the next screen and any other button closes the dashboard
 - **Show status notifications** — errors are always shown regardless
 
 ## Gestures

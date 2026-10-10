@@ -518,17 +518,11 @@ function TrmnlDisplay:displayImage(image_path)
         return true
     end
 
-    -- Add key press handler for non-touch devices
-    self.image_widget.onAnyKeyPressed = function()
-        logger.info("TRMNL: Closing image via button press")
-        if self.interactive_mode then
-            logger.info("TRMNL: Exiting interactive mode")
-            self.interactive_mode = false
-            self:stopAutoRefresh()
+    self.image_widget.onAnyKeyPressed = function(widget, _, key)
+        if key and (key:match({ Input.group.PgFwd }) or key:match({ Input.group.PgBack })) then
+            return widget.onGestureFetch()
         end
-        UIManager:close(self.image_widget)
-        self.image_widget = nil
-        return true
+        return widget.onGestureClose()
     end
 
     self.image_widget.onGestureFetch = function()

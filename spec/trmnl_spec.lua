@@ -193,4 +193,45 @@ describe("TRMNL display plugin", function()
             assert.is_nil(TrmnlDisplay:getRssi("/nonexistent/wireless"))
         end)
     end)
+
+    describe("request timeouts", function()
+        local socketutil
+
+        setup(function()
+            socketutil = require("socketutil")
+        end)
+
+        local function block_timeout_during(call)
+            local seen
+            local real_http = package.loaded["socket.http"]
+            package.loaded["socket.http"] = {
+                request = function() seen = socketutil.block_timeout; return nil, "timeout" end,
+            }
+            call(setmetatable({
+                settings  = { api_key = "test-key", base_url = "http://example.invalid" },
+                showError = function() end,
+            }, { __index = TrmnlDisplay }))
+            package.loaded["socket.http"] = real_http
+            return seen
+        end
+
+        it("bounds the screen request", function()
+            assert.is_equal(socketutil.LARGE_BLOCK_TIMEOUT,
+                block_timeout_during(function(instance) instance:fetchScreenMetadata() end))
+        end)
+
+        it("bounds the image download", function()
+            local path = os.tmpname()
+            local timeout = block_timeout_during(function(instance)
+                instance:downloadImage("http://example.invalid/a.png", path)
+            end)
+            os.remove(path)
+            assert.is_equal(socketutil.FILE_BLOCK_TIMEOUT, timeout)
+        end)
+
+        it("restores the default timeout afterwards", function()
+            block_timeout_during(function(instance) instance:fetchScreenMetadata() end)
+            assert.is_equal(socketutil.DEFAULT_BLOCK_TIMEOUT, socketutil.block_timeout)
+        end)
+    end)
 end)

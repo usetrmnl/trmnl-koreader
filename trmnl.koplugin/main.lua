@@ -295,10 +295,10 @@ function TrmnlDisplay:fetchScreenMetadata()
     -- LuaSocket libraries for HTTP/HTTPS requests
     local http = require("socket.http") -- HTTP protocol
     local https = require("ssl.https")  -- HTTPS/TLS protocol
-    local ltn12 = require("ltn12")      -- Streaming data I/O filters
     local JSON = require("json")        -- JSON parsing
+    local socketutil = require("socketutil")
 
-    -- ltn12.sink.table accumulates response body into a Lua table
+    -- The sink accumulates the response body into this table
     local sink = {}
     local request_url = self.settings.base_url .. "/api/display"
 
@@ -354,7 +354,7 @@ function TrmnlDisplay:fetchScreenMetadata()
             [mac_header_name] = mac_address,           -- MAC address with custom header name
             ["User-Agent"] = self.settings.user_agent, -- Plugin identification
         },
-        sink = ltn12.sink.table(sink),                 -- Response body stored in 'sink' table
+        sink = socketutil.table_sink(sink),            -- Response body stored in 'sink' table
         -- SSL/TLS configuration for HTTPS
         protocol = "any",                              -- Accept any SSL/TLS version
         options = { "all", "no_sslv2", "no_sslv3" },   -- Disable insecure SSL versions
@@ -363,7 +363,10 @@ function TrmnlDisplay:fetchScreenMetadata()
 
     -- Choose HTTP or HTTPS based on URL scheme
     local httpx = request_url:match("^https://") and https or http
+    -- NOTE: requests block KOReader's UI, so a stalled server must not hold it for LuaSocket's 60 s default.
+    socketutil:set_timeout(socketutil.LARGE_BLOCK_TIMEOUT, socketutil.LARGE_TOTAL_TIMEOUT)
     local success_code, status_code = httpx.request(request)
+    socketutil:reset_timeout()
 
     logger.dbg("TRMNL: Success code:", success_code)
     logger.dbg("TRMNL: HTTP status code:", status_code)
@@ -407,7 +410,7 @@ end
 function TrmnlDisplay:downloadImage(image_url, filepath)
     local http = require("socket.http")
     local https = require("ssl.https")
-    local ltn12 = require("ltn12")
+    local socketutil = require("socketutil")
 
     logger.info("TRMNL: Downloading image from", image_url)
 
@@ -419,7 +422,7 @@ function TrmnlDisplay:downloadImage(image_url, filepath)
 
     local request = {
         url = image_url,
-        sink = ltn12.sink.file(file),
+        sink = socketutil.file_sink(file),
         headers = {
             ["User-Agent"] = self.settings.user_agent,
         },
@@ -430,7 +433,9 @@ function TrmnlDisplay:downloadImage(image_url, filepath)
     }
 
     local httpx = image_url:match("^https://") and https or http
+    socketutil:set_timeout(socketutil.FILE_BLOCK_TIMEOUT, socketutil.FILE_TOTAL_TIMEOUT)
     local success_code, status_code = httpx.request(request)
+    socketutil:reset_timeout()
 
     logger.dbg("TRMNL: Image download success code:", success_code)
     logger.dbg("TRMNL: Image download HTTP status:", status_code)

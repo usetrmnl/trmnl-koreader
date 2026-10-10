@@ -503,9 +503,8 @@ function TrmnlDisplay:displayImage(image_path)
         image,
     }
 
-    -- Add tap handler to close the image
-    self.image_widget.onTapClose = function()
-        logger.info("TRMNL: Closing image via tap")
+    self.image_widget.onGestureClose = function()
+        logger.info("TRMNL: Closing image via gesture")
         if self.interactive_mode then
             logger.info("TRMNL: Exiting interactive mode")
             self.interactive_mode = false
@@ -529,20 +528,21 @@ function TrmnlDisplay:displayImage(image_path)
         return true
     end
 
-    -- Register tap gesture
+    self.image_widget.onGestureFetch = function()
+        self:onTrmnlFetch()
+        return true
+    end
+
     if Device:isTouchDevice() then
-        self.image_widget.ges_events = {
-            TapClose = {
-                GestureRange:new {
-                    ges = "tap",
-                    range = Geom:new {
-                        x = 0, y = 0,
-                        w = screen_width,
-                        h = screen_height,
-                    }
-                }
-            }
-        }
+        local function anywhere(ges)
+            return { GestureRange:new { ges = ges, range = Geom:new { x = 0, y = 0, w = screen_width, h = screen_height } } }
+        end
+        -- Hold to close stops accidental exits on a shared dashboard; tap then fetches a new screen.
+        if self.settings.close_gesture == "hold" then
+            self.image_widget.ges_events = { GestureClose = anywhere("hold"), GestureFetch = anywhere("tap") }
+        else
+            self.image_widget.ges_events = { GestureClose = anywhere("tap") }
+        end
     end
 
     -- Register key events for non-touch devices
@@ -1291,6 +1291,13 @@ function TrmnlDisplay:addToMainMenu(menu_items)
             self:createAutoRefreshToggle(),
             self:createServerRefreshToggle(),
             self:createNotificationsToggle(),
+            {
+                text = _("Dashboard gestures"),
+                sub_item_table = {
+                    self:createRadioMenuItem("Tap closes the screen", "close_gesture", nil),
+                    self:createRadioMenuItem("Hold closes, tap fetches a new screen", "close_gesture", "hold"),
+                }
+            },
             {
                 text = _("E-ink refresh type"),
                 sub_item_table = {

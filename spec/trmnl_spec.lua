@@ -64,7 +64,7 @@ describe("TRMNL display plugin", function()
     -- Captures the headers of a real fetchScreenMetadata call by standing in for
     -- the HTTPS transport. The response never parses, which is fine - only the
     -- outgoing request is under test.
-    local function headers_for(settings, detected_mac)
+    local function headers_for(settings, detected_mac, rssi)
         local captured
         local real_https = package.loaded["ssl.https"]
         package.loaded["ssl.https"] = {
@@ -76,6 +76,7 @@ describe("TRMNL display plugin", function()
         local instance = setmetatable({
             settings      = settings,
             getMacAddress = function() return detected_mac end,
+            getRssi       = function() return rssi end,
             showError     = function() end,
         }, { __index = TrmnlDisplay })
 
@@ -148,6 +149,48 @@ describe("TRMNL display plugin", function()
             local scheduled = is_scheduled(instance.refresh_task)
             UIManager:unschedule(instance.refresh_task)
             assert.is_true(scheduled)
+        end)
+    end)
+
+    it("sends the measured signal level", function()
+        assert.is_equal("-56", headers_for({}, nil, -56)["rssi"])
+    end)
+
+    it("omits rssi when the signal level is unknown", function()
+        assert.is_nil(headers_for({}, nil, nil)["rssi"])
+    end)
+
+    it("sends whether the battery is charging", function()
+        local Device = require("device")
+        stub(Device, "getPowerDevice", { getCapacity = function() return 80 end, isCharging = function() return true end })
+        local headers = headers_for({}, nil, nil)
+        Device.getPowerDevice:revert()
+        assert.is_equal("true", headers["battery-charging"])
+    end)
+
+    describe("getRssi", function()
+        local function rssi_from(level)
+            local path = os.tmpname()
+            local file = io.open(path, "w")
+            file:write("Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE\n",
+                       " face | tus | link level noise |  nwid  crypt   frag  retry   misc | beacon | 22\n",
+                       " wlan0: 0000   54.  " .. level .. ".  -256        0      0      0      0      0        0\n")
+            file:close()
+            local rssi = TrmnlDisplay:getRssi(path)
+            os.remove(path)
+            return rssi
+        end
+
+        it("reads the wireless interface level in dBm", function()
+            assert.is_equal(-56, rssi_from("-56"))
+        end)
+
+        it("ignores a level that is not in dBm", function()
+            assert.is_nil(rssi_from("200"))
+        end)
+
+        it("returns nil without wireless statistics", function()
+            assert.is_nil(TrmnlDisplay:getRssi("/nonexistent/wireless"))
         end)
     end)
 end)

@@ -344,9 +344,10 @@ function TrmnlDisplay:fetchScreenMetadata()
     logger.dbg("TRMNL: HTTP status code:", status_code)
 
     if not success_code or success_code ~= 1 then
-        logger.err("TRMNL: Request failed - success code:", success_code)
+        -- NOTE: on a transport failure LuaSocket returns the reason in place of the status.
+        logger.err("TRMNL: Request failed:", status_code)
         local context = "Network error - check WiFi connection\nURL: " .. request_url
-        self:showError(T(_("Failed to reach TRMNL API (code: %1)"), tostring(success_code)), context)
+        self:showError(T(_("Failed to reach the server: %1"), tostring(status_code)), context)
         return nil
     end
 
@@ -410,15 +411,15 @@ function TrmnlDisplay:downloadImage(image_url, filepath)
     logger.dbg("TRMNL: Image download HTTP status:", status_code)
 
     if not success_code or success_code ~= 1 then
-        logger.err("TRMNL: Image download failed - success code:", success_code)
+        logger.err("TRMNL: Image download failed:", status_code)
         os.remove(filepath)
-        return false
+        return false, tostring(status_code)
     end
 
     if status_code ~= 200 then
         logger.err("TRMNL: Image download failed - HTTP", status_code)
         os.remove(filepath)
-        return false
+        return false, "HTTP " .. tostring(status_code)
     end
 
     logger.info("TRMNL: Image downloaded successfully")
@@ -784,9 +785,9 @@ function TrmnlDisplay:downloadImageIfNeeded(response)
         end
     end
 
-    -- Download new image
-    if not self:downloadImage(response.image_url, image_path) then
-        return nil -- Download failed
+    local downloaded, reason = self:downloadImage(response.image_url, image_path)
+    if not downloaded then
+        return nil, reason
     end
 
     -- Update cache tracking
@@ -890,9 +891,9 @@ function TrmnlDisplay:_performFetch()
 
     self:updateRefreshInterval(response)
 
-    local image_path = self:downloadImageIfNeeded(response)
+    local image_path, reason = self:downloadImageIfNeeded(response)
     if not image_path then
-        self:handleFetchError("Failed to download image")
+        self:handleFetchError(reason and "Failed to download image: " .. reason or "Failed to download image")
         NetworkMgr:afterWifiAction()
         return
     end

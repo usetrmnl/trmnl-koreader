@@ -76,7 +76,6 @@ local TrmnlDisplay = WidgetContainer:extend {
     image_widget = nil,
     last_image_path = nil,
     last_image_filename = nil,
-    last_fetch_timestamp = 0,
 
     retry_manager = nil,
 }
@@ -88,7 +87,6 @@ TrmnlDisplay.CONSTANTS = {
     },
     TIMING = {
         DEFAULT_REFRESH_INTERVAL = 1800,
-        DEBOUNCE_DELAY = 25,
     },
     FILES = {
         DEFAULT_IMAGE = "trmnl_screen.png",
@@ -789,27 +787,6 @@ function TrmnlDisplay:downloadImageIfNeeded(response)
 end
 
 --[[--
-Check debounce timing to prevent rapid API calls.
-@treturn boolean true if check passed, false if debouncing
-]]
-function TrmnlDisplay:checkDebounce(skip_debounce)
-    if skip_debounce then
-        return true
-    end
-
-    local now = UIManager:getElapsedTimeSinceBoot()
-    local time_since_last = now - self.last_fetch_timestamp
-
-    if time_since_last <= self.CONSTANTS.TIMING.DEBOUNCE_DELAY then
-        logger.dbg("TRMNL: Debouncing - last fetch", time_since_last, "seconds ago")
-        return false
-    end
-
-    self.last_fetch_timestamp = now
-    return true
-end
-
---[[--
 Finalize successful fetch - cleanup, reset state, and schedule next refresh.
 ]]
 function TrmnlDisplay:finalizeFetchSuccess(image_path)
@@ -833,12 +810,8 @@ Main workflow - fetches screen from API and displays it.
 Called by user action, auto-refresh timer, or network availability callback.
 Uses pipeline pattern for clear flow control and early exits on errors.
 ]]
-function TrmnlDisplay:fetchAndDisplay(skip_debounce)
+function TrmnlDisplay:fetchAndDisplay()
     logger.info("TRMNL: Starting fetch and display cycle")
-
-    if not self:checkDebounce(skip_debounce) then
-        return
-    end
 
     -- NOTE: a failed Wi-Fi connection never runs the callback, so the retry is booked before trying.
     -- A successful fetch replaces it with the normal refresh.
@@ -1197,7 +1170,7 @@ function TrmnlDisplay:createFetchMenuItem()
     return {
         text = _("Fetch screen now"),
         callback = function()
-            self:fetchAndDisplay(true)
+            self:fetchAndDisplay()
         end
     }
 end
@@ -1300,7 +1273,7 @@ function TrmnlDisplay:addToMainMenu(menu_items)
 end
 
 function TrmnlDisplay:onTrmnlFetch()
-    self:fetchAndDisplay(true)
+    self:fetchAndDisplay()
 end
 
 function TrmnlDisplay:onTrmnlStartInteractive()
@@ -1312,7 +1285,7 @@ function TrmnlDisplay:onTrmnlStartInteractive()
         self:startAutoRefresh()
     else
         -- Already running, but ensure image is displayed
-        self:fetchAndDisplay(true)
+        self:fetchAndDisplay()
     end
 end
 

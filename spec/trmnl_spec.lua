@@ -2,7 +2,7 @@
 Runs inside KOReader's busted suite. From a KOReader checkout with this plugin
 and this spec symlinked in (plugins/trmnl.koplugin, spec/unit/trmnl_spec.lua):
 
-    ./kodev test front trmnl_spec.lua
+    ./kodev test --busted front spec/front/unit/trmnl_spec.lua
 
 Covers the /api/display outcomes that matter: the API reports device and token
 problems as HTTP 200 with an error body, so "no image_url" is the only signal

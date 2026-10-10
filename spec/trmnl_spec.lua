@@ -20,13 +20,13 @@ describe("TRMNL display plugin", function()
 
     -- Drives the real _performFetch with a canned API response and returns the
     -- message the user would have been shown.
-    local function message_for(response, image_path)
+    local function message_for(response, image_path, download_error)
         local seen
         local instance = setmetatable({
             fetchScreenMetadata   = function() return response end,
             handleFetchError      = function(_, msg) seen = msg end,
             updateRefreshInterval = function() end,
-            downloadImageIfNeeded = function() return image_path end,
+            downloadImageIfNeeded = function() return image_path, download_error end,
             finalizeFetchSuccess  = function() end,
         }, { __index = TrmnlDisplay })
 
@@ -54,6 +54,11 @@ describe("TRMNL display plugin", function()
     it("leaves download failures to the download path", function()
         assert.is_equal("Failed to download image",
             message_for({ image_url = "https://example.invalid/a.png" }, nil))
+    end)
+
+    it("says why the image download failed", function()
+        assert.is_equal("Failed to download image: host not found",
+            message_for({ image_url = "http://truenas.local/a.png" }, nil, "host not found"))
     end)
 
     -- Captures the headers of a real fetchScreenMetadata call by standing in for
@@ -96,5 +101,21 @@ describe("TRMNL display plugin", function()
         local headers = headers_for({ mac_header_name = "MAC Address" }, "AA:BB:CC:DD:EE:FF")
         assert.is_equal("AA:BB:CC:DD:EE:FF", headers["MAC Address"])
         assert.is_nil(headers["ID"])
+    end)
+
+    it("shows why a request could not reach the server", function()
+        local seen
+        local real_http = package.loaded["socket.http"]
+        package.loaded["socket.http"] = {
+            request = function() return nil, "host or service not provided, or not known" end,
+        }
+        local instance = setmetatable({
+            settings  = { api_key = "test-key", base_url = "http://truenas.local:4567" },
+            showError = function(_, msg) seen = msg end,
+        }, { __index = TrmnlDisplay })
+
+        instance:fetchScreenMetadata()
+        package.loaded["socket.http"] = real_http
+        assert.matches("host or service not provided", seen)
     end)
 end)

@@ -1,0 +1,41 @@
+name: Spec
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  spec:
+    runs-on: ubuntu-24.04
+    # The image KOReader's own CI runs its emulator tests in.
+    container:
+      image: koreader/kobase-clang:5.0.0-22.04
+      options: --user root
+    env:
+      KOREADER_REF: v2026.07.1
+      USE_CLANG: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      # NOTE: the emulator takes ~15 minutes to build, so it is cached per KOReader release.
+      - name: Restore KOReader emulator
+        id: emulator
+        uses: actions/cache@v4
+        with:
+          path: koreader
+          key: koreader-emulator-${{ env.KOREADER_REF }}-kobase-clang-5.0.0
+
+      - name: Build KOReader emulator
+        if: steps.emulator.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$KOREADER_REF" https://github.com/koreader/koreader.git
+          cd koreader && ./kodev build
+
+      - name: Run spec
+        run: |
+          ln -sfn "$GITHUB_WORKSPACE/plugin/trmnl.koplugin" koreader/plugins/trmnl.koplugin
+          ln -sfn "$GITHUB_WORKSPACE/plugin/spec/trmnl_spec.lua" koreader/spec/unit/trmnl_spec.lua
+          cd koreader && ./kodev test --busted front spec/front/unit/trmnl_spec.lua

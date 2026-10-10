@@ -234,4 +234,79 @@ describe("TRMNL display plugin", function()
             assert.is_equal(socketutil.DEFAULT_BLOCK_TIMEOUT, socketutil.block_timeout)
         end)
     end)
+
+    describe("dashboard gestures", function()
+        local Device, Geom, RenderImage, UIManager
+
+        setup(function()
+            Device = require("device")
+            Geom = require("ui/geometry")
+            RenderImage = require("ui/renderimage")
+            UIManager = require("ui/uimanager")
+        end)
+
+        before_each(function()
+            stub(Device, "isTouchDevice", true)
+            stub(RenderImage, "renderImageFile", function()
+                return require("ffi/blitbuffer").new(Device.screen:getWidth(), Device.screen:getHeight())
+            end)
+            stub(UIManager, "show")
+            stub(UIManager, "close")
+            stub(UIManager, "setDirty")
+        end)
+
+        after_each(function()
+            Device.isTouchDevice:revert()
+            RenderImage.renderImageFile:revert()
+            UIManager.show:revert()
+            UIManager.close:revert()
+            UIManager.setDirty:revert()
+        end)
+
+        local function dashboard(close_gesture)
+            local instance = setmetatable({
+                settings = { close_gesture = close_gesture },
+                fetches = 0,
+                onTrmnlFetch = function(self) self.fetches = self.fetches + 1 end,
+            }, { __index = TrmnlDisplay })
+            instance:displayImage("dashboard.png")
+            return instance
+        end
+
+        local function send(instance, ges)
+            instance.image_widget:onGesture({ ges = ges, pos = Geom:new{ x = 10, y = 10 } })
+        end
+
+        it("closes on tap for installs without the setting", function()
+            local instance = dashboard(nil)
+            send(instance, "tap")
+            assert.is_nil(instance.image_widget)
+        end)
+
+        it("fetches a new screen on tap and stays open when hold closes it", function()
+            local instance = dashboard("hold")
+            send(instance, "tap")
+            assert.is_equal(1, instance.fetches)
+            assert.is_not_nil(instance.image_widget)
+        end)
+
+        it("closes on hold when hold is the close gesture", function()
+            local instance = dashboard("hold")
+            send(instance, "hold")
+            assert.is_nil(instance.image_widget)
+        end)
+
+        it("goes back to tap closing when chosen from the menu", function()
+            local instance = setmetatable({ settings = { close_gesture = "hold" }, saveSettings = function() end },
+                { __index = TrmnlDisplay })
+            local menu = {}
+            instance:addToMainMenu(menu)
+            for _, item in ipairs(menu.trmnl.sub_item_table) do
+                if item.text == "Dashboard gestures" then item.sub_item_table[1].callback() end
+            end
+            instance:displayImage("dashboard.png")
+            send(instance, "tap")
+            assert.is_nil(instance.image_widget)
+        end)
+    end)
 end)

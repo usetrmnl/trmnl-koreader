@@ -33,6 +33,8 @@ For a device that sits on a desk and updates itself:
 
 Tap the display to stop. To start again later, use **Start TRMNL (interactive)**.
 
+On a shared dashboard, set **Dashboard gestures** to **Hold closes, tap fetches a new screen** so a stray tap shows the next screen instead of closing it.
+
 ## Make the Battery Last
 
 This is the difference between a few days and a few weeks of runtime.
@@ -61,6 +63,7 @@ Also in the **TRMNL Display** menu:
 
 - **Use server refresh interval** — let the server's `refresh_rate` override your local interval. Recommended, since you can then retune timing from the dashboard without touching the device.
 - **E-ink refresh type** — UI (balanced), Full (best quality), Flash UI, or Partial (fastest)
+- **Dashboard gestures** — **Tap closes the screen** (default), or **Hold closes, tap fetches a new screen**
 - **Show status notifications** — errors are always shown regardless
 
 ## Gestures

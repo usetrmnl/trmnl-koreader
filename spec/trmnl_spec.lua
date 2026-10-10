@@ -185,8 +185,13 @@ describe("TRMNL display plugin", function()
             assert.is_equal(-56, rssi_from("-56"))
         end)
 
-        it("ignores a level that is not in dBm", function()
-            assert.is_nil(rssi_from("200"))
+        it("reads an unsigned level as dBm, as older Kindle drivers report it", function()
+            -- Kindle Paperwhite 1 (AR6000): 192 is -64 dBm, which iwconfig shows.
+            assert.is_equal(-64, rssi_from("192"))
+        end)
+
+        it("ignores a level too small to be dBm", function()
+            assert.is_nil(rssi_from("31"))
         end)
 
         it("returns nil without wireless statistics", function()

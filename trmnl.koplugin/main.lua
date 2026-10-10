@@ -708,24 +708,16 @@ function TrmnlDisplay:validateAndFixScheduleState()
 end
 
 --[[--
-Handle fetch errors with exponential backoff retry logic.
-
-Increments retry counter, shows user notification,
-and schedules retry if auto-refresh is enabled.
+Report a failed fetch. The retry itself was already booked by fetchAndDisplay.
 
 @tparam string error_message User-friendly error description
 ]]
 function TrmnlDisplay:handleFetchError(error_message)
-    local retry_delay = self.retry_manager:increment()
-
     logger.err("TRMNL:", error_message, "(attempt", self.retry_manager.count, ")")
-    self:showError(T(_("Failed: %1. Will retry in %2 seconds."), _(error_message), retry_delay))
-
-    -- NOTE: afterWifiAction will be called by the caller to clean up WiFi
-
     if self.auto_refresh_enabled then
-        logger.info("TRMNL: Scheduling retry in", retry_delay, "seconds")
-        UIManager:scheduleIn(retry_delay, self.refresh_task)
+        self:showError(T(_("Failed: %1. Will retry in %2 seconds."), _(error_message), self.retry_manager:getDelay()))
+    else
+        self:showError(T(_("Failed: %1"), _(error_message)))
     end
 end
 
@@ -848,8 +840,16 @@ function TrmnlDisplay:fetchAndDisplay(skip_debounce)
         return
     end
 
-    -- Use KOReader's WiFi management framework
-    -- runWhenConnected will turn on WiFi if needed and wait for connection
+    -- NOTE: a failed Wi-Fi connection never runs the callback, so the retry is booked before trying.
+    -- A successful fetch replaces it with the normal refresh.
+    if self.auto_refresh_enabled then
+        self:unscheduleRefreshTask()
+        local retry_delay = self.retry_manager:increment()
+        logger.info("TRMNL: Retry booked in", retry_delay, "seconds in case this attempt fails")
+        UIManager:scheduleIn(retry_delay, self.refresh_task)
+        self.auto_refresh_scheduled = true
+    end
+
     NetworkMgr:runWhenConnected(function()
         self:_doFetchAndDisplay()
     end)

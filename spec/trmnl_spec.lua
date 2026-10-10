@@ -118,4 +118,36 @@ describe("TRMNL display plugin", function()
         package.loaded["socket.http"] = real_http
         assert.matches("host or service not provided", seen)
     end)
+
+    describe("auto-refresh", function()
+        local NetworkMgr, UIManager
+
+        setup(function()
+            NetworkMgr = require("ui/network/manager")
+            UIManager = require("ui/uimanager")
+        end)
+
+        local function is_scheduled(task)
+            for _, item in ipairs(UIManager._task_queue) do
+                if item.action == task then return true end
+            end
+            return false
+        end
+
+        it("books the next attempt when Wi-Fi never connects", function()
+            -- A failed connection drops the callback, which is what this stub does.
+            stub(NetworkMgr, "runWhenConnected")
+            local instance = setmetatable({
+                auto_refresh_enabled = true,
+                retry_manager = { increment = function() return 120 end },
+                refresh_task = function() end,
+            }, { __index = TrmnlDisplay })
+
+            instance:fetchAndDisplay()
+            NetworkMgr.runWhenConnected:revert()
+            local scheduled = is_scheduled(instance.refresh_task)
+            UIManager:unschedule(instance.refresh_task)
+            assert.is_true(scheduled)
+        end)
+    end)
 end)

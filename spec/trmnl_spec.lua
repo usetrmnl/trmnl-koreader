@@ -394,4 +394,15 @@ describe("TRMNL display plugin", function()
         assert.same({ "key-123", "http://192.168.1.7:2300", "MAC", "AA:BB:CC:DD:EE:FF" },
             { instance.settings.api_key, instance.settings.base_url, instance.settings.mac_header_name, instance.settings.mac_address })
     end)
+
+    it("puts itself first in the Tools tab, once", function()
+        TrmnlDisplay:pinToTopOfTools()
+        TrmnlDisplay:pinToTopOfTools()
+        for _, order_module in ipairs({ "ui/elements/filemanager_menu_order", "ui/elements/reader_menu_order" }) do
+            local tools = require(order_module).tools
+            local count = 0
+            for _, id in ipairs(tools) do if id == "trmnl" then count = count + 1 end end
+            assert.same({ "trmnl", 1 }, { tools[1], count })
+        end
+    end)
 end)

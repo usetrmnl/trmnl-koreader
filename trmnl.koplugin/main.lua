@@ -127,6 +127,7 @@ function TrmnlDisplay:init()
     Dispatcher:registerAction("trmnl_fetch_now", {category="none", event="TrmnlFetch", title=_("TRMNL: Fetch now"), general=true})
     Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start dashboard"), general=true})
 
+    self:pinToTopOfTools()
     self.ui.menu:registerToMainMenu(self)
 
     if self.auto_refresh_enabled then
@@ -137,6 +138,15 @@ end
 --[[--
 Save settings to disk (called automatically on suspend/exit).
 ]]
+function TrmnlDisplay:pinToTopOfTools()
+    for _, order_module in ipairs({ "ui/elements/filemanager_menu_order", "ui/elements/reader_menu_order" }) do
+        local tools = require(order_module).tools
+        if tools[1] ~= "trmnl" then
+            table.insert(tools, 1, "trmnl")
+        end
+    end
+end
+
 function TrmnlDisplay:onFlushSettings()
     if self.settings_file then
         self.settings_file:saveSetting("settings", self.settings)

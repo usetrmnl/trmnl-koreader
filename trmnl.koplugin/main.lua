@@ -21,6 +21,7 @@ local Input = Device.input
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local Dispatcher = require("dispatcher")
+local lfs = require("libs/libkoreader-lfs")
 local logger = require("logger")
 local util = require("util")
 local _ = require("gettext")
@@ -72,7 +73,6 @@ local TrmnlDisplay = WidgetContainer:extend {
     refresh_task = nil,
     auto_refresh_enabled = false,
     image_widget = nil,
-    last_image_path = nil,
     last_image_filename = nil,
 
     retry_manager = nil,
@@ -86,6 +86,7 @@ TrmnlDisplay.CONSTANTS = {
     },
     FILES = {
         DEFAULT_IMAGE = "trmnl_screen.png",
+        SCREENS_FOLDER = "trmnl-screens",
         API_KEY = "apikey.txt",
     }
 }
@@ -128,6 +129,7 @@ function TrmnlDisplay:init()
     Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start dashboard"), general=true})
 
     self:pinToTopOfTools()
+    self:removeScreensLeftByOlderVersions()
     self.ui.menu:registerToMainMenu(self)
 
     if self.auto_refresh_enabled then
@@ -143,6 +145,15 @@ function TrmnlDisplay:pinToTopOfTools()
         local tools = require(order_module).tools
         if tools[1] ~= "trmnl" then
             table.insert(tools, 1, "trmnl")
+        end
+    end
+end
+
+function TrmnlDisplay:removeScreensLeftByOlderVersions()
+    local data_dir = DataStorage:getDataDir()
+    for name in lfs.dir(data_dir) do
+        if name:match("^plugin%-%x+%-%d+%.png$") or name == self.CONSTANTS.FILES.DEFAULT_IMAGE then
+            os.remove(data_dir .. "/" .. name)
         end
     end
 end
@@ -720,7 +731,9 @@ function TrmnlDisplay:downloadImageIfNeeded(response)
         filename = filename .. ".png"
     end
 
-    local image_path = DataStorage:getDataDir() .. "/" .. filename
+    local screens_folder = DataStorage:getDataDir() .. "/" .. self.CONSTANTS.FILES.SCREENS_FOLDER
+    lfs.mkdir(screens_folder)
+    local image_path = screens_folder .. "/" .. filename
 
     -- Check if image has changed
     if filename == self.last_image_filename then
@@ -728,27 +741,19 @@ function TrmnlDisplay:downloadImageIfNeeded(response)
         return image_path
     end
 
-    -- Image changed, clean up old file before downloading new one
     logger.info("TRMNL: Image changed, downloading:", filename)
     self:showProgress("Downloading new screen...", filename)
-
-    if self.last_image_path and self.last_image_path ~= image_path then
-        logger.info("TRMNL: Removing old image file:", self.last_image_path)
-        local success = os.remove(self.last_image_path)
-        if success then
-            logger.dbg("TRMNL: Old image file deleted successfully")
-        else
-            logger.warn("TRMNL: Could not delete old image file (may not exist)")
-        end
-    end
 
     local downloaded, reason = self:downloadImage(response.image_url, image_path)
     if not downloaded then
         return nil, reason
     end
 
-    -- Update cache tracking
-    self.last_image_path = image_path
+    for name in lfs.dir(screens_folder) do
+        if name ~= filename and name ~= "." and name ~= ".." then
+            os.remove(screens_folder .. "/" .. name)
+        end
+    end
     self.last_image_filename = filename
     return image_path
 end

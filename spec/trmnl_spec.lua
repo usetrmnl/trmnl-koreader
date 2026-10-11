@@ -407,4 +407,54 @@ describe("TRMNL display plugin", function()
             assert.same({ "trmnl", 1 }, { tools[1], count })
         end
     end)
+
+    describe("screens on disk", function()
+        local DataStorage, lfs, data_dir
+
+        setup(function()
+            DataStorage = require("datastorage")
+            lfs = require("libs/libkoreader-lfs")
+        end)
+
+        before_each(function()
+            data_dir = os.tmpname()
+            os.remove(data_dir)
+            lfs.mkdir(data_dir)
+            stub(DataStorage, "getDataDir", data_dir)
+        end)
+
+        after_each(function()
+            DataStorage.getDataDir:revert()
+            os.execute("rm -rf '" .. data_dir .. "'")
+        end)
+
+        local function files_in(dir)
+            local names = {}
+            for name in lfs.dir(dir) do
+                if name ~= "." and name ~= ".." then table.insert(names, name) end
+            end
+            table.sort(names)
+            return names
+        end
+
+        local function touch(path) local file = io.open(path, "w"); file:write("png"); file:close() end
+
+        it("keeps only the newest screen", function()
+            local instance = setmetatable({
+                showProgress = function() end,
+                downloadImage = function(_, _, path) touch(path) return true end,
+            }, { __index = TrmnlDisplay })
+            instance:downloadImageIfNeeded({ image_url = "https://example.invalid/1", filename = "plugin-ab12-1" })
+            instance:downloadImageIfNeeded({ image_url = "https://example.invalid/2", filename = "plugin-ab12-2" })
+            assert.same({ "plugin-ab12-2.png" }, files_in(data_dir .. "/trmnl-screens"))
+        end)
+
+        it("clears screens older versions left in the data folder and nothing else", function()
+            for _, name in ipairs({ "plugin-ab12cd-1761612285.png", "trmnl_screen.png", "notes.png" }) do
+                touch(data_dir .. "/" .. name)
+            end
+            TrmnlDisplay:removeScreensLeftByOlderVersions()
+            assert.same({ "notes.png" }, files_in(data_dir))
+        end)
+    end)
 end)

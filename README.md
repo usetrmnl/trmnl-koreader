@@ -28,10 +28,10 @@ For a device that sits on a desk and updates itself:
 1. Stop KOReader from sleeping:
    - **Tools → More tools → Keep alive** — enable
    - **Settings → Device → Auto suspend timeout** — disable
-2. **Tools → TRMNL Display → Enable auto-refresh**. The first fetch happens immediately, then repeats on your refresh interval.
+2. **Tools → TRMNL Display → Start dashboard**. The first fetch happens immediately, then repeats on your refresh interval.
 3. Leave KOReader on that screen.
 
-Tap the display to stop. To start again later, use **Start TRMNL (interactive)**.
+Closing the dashboard stops it. To start again later, use **Start dashboard**.
 
 On a shared dashboard, set **Dashboard gestures** to **Hold closes, tap fetches a new screen** so a stray tap shows the next screen instead of closing it.
 
@@ -72,7 +72,7 @@ Also in the **TRMNL Display** menu:
 The plugin registers two actions with KOReader's dispatcher, so you can bind them to gestures, corner taps, or hardware keys via **Settings → Taps and gestures → Gesture manager**:
 
 - **TRMNL: Fetch now** — pull the next screen without opening menus
-- **TRMNL: Start (interactive)**
+- **TRMNL: Start dashboard**
 
 Binding *Fetch now* to a corner tap is a fast way to page through dashboards.
 
@@ -98,7 +98,7 @@ The request never got out. Check Wi-Fi, and check **Base URL** if you are on BYO
 
 **Device keeps sleeping**
 
-Use **Enable auto-refresh** rather than **Fetch screen now**, and apply the two sleep settings under [Run It as a Dashboard](#run-it-as-a-dashboard).
+Use **Start dashboard** rather than **Fetch screen now**, and apply the two sleep settings under [Run It as a Dashboard](#run-it-as-a-dashboard).
 
 **Ghosting or a muddy image**
 

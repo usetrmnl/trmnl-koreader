@@ -295,8 +295,7 @@ Makes HTTP GET request to /api/display endpoint with headers:
 ]]
 function TrmnlDisplay:fetchScreenMetadata()
     if not self.settings.api_key or self.settings.api_key == "" then
-        self:showError("Please configure your TRMNL API key first.")
-        return nil
+        return nil, "Please configure your TRMNL API key first"
     end
 
     -- LuaSocket libraries for HTTP/HTTPS requests
@@ -381,25 +380,18 @@ function TrmnlDisplay:fetchScreenMetadata()
     if not success_code or success_code ~= 1 then
         -- NOTE: on a transport failure LuaSocket returns the reason in place of the status.
         logger.err("TRMNL: Request failed:", status_code)
-        local context = "Network error - check WiFi connection\nURL: " .. request_url
-        self:showError(T(_("Failed to reach the server: %1"), tostring(status_code)), context)
-        return nil
+        return nil, T(_("Failed to reach the server: %1"), tostring(status_code))
     end
 
     if status_code ~= 200 then
         logger.err("TRMNL: API returned HTTP", status_code)
-        local context_msg
+        local hint = ""
         if status_code == 401 or status_code == 403 then
-            context_msg = "Check your API key in settings"
+            hint = ": check your API key in settings"
         elseif status_code == 404 then
-            context_msg = "Endpoint not found - verify base URL"
-        elseif status_code >= 500 then
-            context_msg = "Server error - try again later"
-        else
-            context_msg = "HTTP " .. tostring(status_code)
+            hint = ": check the base URL"
         end
-        self:showError("API request failed", context_msg)
-        return nil
+        return nil, "Server returned HTTP " .. tostring(status_code) .. hint
     end
 
     local response_body = table.concat(sink)
@@ -408,7 +400,7 @@ function TrmnlDisplay:fetchScreenMetadata()
     local ok, response = pcall(JSON.decode, response_body)
     if not ok or not response then
         logger.err("TRMNL: Failed to parse JSON response")
-        return nil
+        return nil, "The server's response is not JSON: check the base URL"
     end
 
     return response
@@ -688,9 +680,9 @@ Report a failed fetch. The retry itself was already booked by fetchAndDisplay.
 function TrmnlDisplay:handleFetchError(error_message)
     logger.err("TRMNL:", error_message, "(attempt", self.retry_manager.count, ")")
     if self.auto_refresh_enabled then
-        self:showError(T(_("Failed: %1. Will retry in %2 seconds."), _(error_message), self.retry_manager:getDelay()))
+        self:showError(T(_("%1. Will retry in %2 seconds."), _(error_message), self.retry_manager:getDelay()))
     else
-        self:showError(T(_("Failed: %1"), _(error_message)))
+        self:showError(_(error_message))
     end
 end
 
@@ -821,7 +813,7 @@ end
 Perform the actual fetch and display after WiFi is ready.
 ]]
 function TrmnlDisplay:_performFetch()
-    local response = self:fetchScreenMetadata()
+    local response, reason = self:fetchScreenMetadata()
     if not response or not response.image_url then
         -- NOTE: the API reports device/token problems as HTTP 200 with
         -- {"status": 500, "error": "..."}, so the only place that detail survives is here.
@@ -830,7 +822,7 @@ function TrmnlDisplay:_performFetch()
         if detail then
             logger.err("TRMNL: API returned no image_url:", detail)
         end
-        self:handleFetchError(detail or "Failed to fetch screen metadata")
+        self:handleFetchError(reason or detail or "Failed to fetch screen metadata")
         NetworkMgr:afterWifiAction()
         return
     end

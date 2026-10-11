@@ -72,7 +72,6 @@ local TrmnlDisplay = WidgetContainer:extend {
     refresh_task = nil,
     auto_refresh_enabled = false,
     auto_refresh_scheduled = false,
-    interactive_mode = false,
     image_widget = nil,
     last_image_path = nil,
     last_image_filename = nil,
@@ -131,7 +130,7 @@ function TrmnlDisplay:init()
     end
 
     Dispatcher:registerAction("trmnl_fetch_now", {category="none", event="TrmnlFetch", title=_("TRMNL: Fetch now"), general=true})
-    Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start (interactive)"), general=true})
+    Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start dashboard"), general=true})
 
     self.ui.menu:registerToMainMenu(self)
 
@@ -508,11 +507,7 @@ function TrmnlDisplay:displayImage(image_path)
 
     self.image_widget.onGestureClose = function()
         logger.info("TRMNL: Closing image via gesture")
-        if self.interactive_mode then
-            logger.info("TRMNL: Exiting interactive mode")
-            self.interactive_mode = false
-            self:stopAutoRefresh()
-        end
+        self:stopAutoRefresh()
         UIManager:close(self.image_widget)
         self.image_widget = nil
         return true
@@ -892,7 +887,7 @@ end
 Start auto-refresh cycle.
 
 Called by:
-- User selecting "Enable auto-refresh" menu item
+- User selecting "Start dashboard" menu item
 - Plugin init() if auto-refresh was previously enabled
 
 Flow:
@@ -928,7 +923,8 @@ end
 Stop auto-refresh cycle.
 
 Called by:
-- User selecting "Disable auto-refresh" menu item
+- User selecting "Stop dashboard" menu item
+- Closing the dashboard (onGestureClose)
 - Device lifecycle events (suspend, plugin close)
 
 Unschedules any pending refresh tasks using UIManager:unschedule().
@@ -1176,15 +1172,6 @@ function TrmnlDisplay:createFetchMenuItem()
     }
 end
 
-function TrmnlDisplay:createStartInteractiveMenuItem()
-    return {
-        text = _("Start TRMNL (interactive)"),
-        callback = function()
-            self:onTrmnlStartInteractive()
-        end
-    }
-end
-
 function TrmnlDisplay:createConfigMenuItem()
     return {
         text = _("Configure TRMNL"),
@@ -1197,16 +1184,16 @@ end
 
 function TrmnlDisplay:createAutoRefreshToggle()
     return self:createToggleMenuItem(
-        "Disable auto-refresh",
-        "Enable auto-refresh",
+        "Stop dashboard",
+        "Start dashboard",
         function() return self.auto_refresh_enabled end,
         function()
             if self.auto_refresh_enabled then
                 self:stopAutoRefresh()
-                return "Auto-refresh disabled."
+                return "Dashboard stopped."
             else
                 self:startAutoRefresh()
-                return "Auto-refresh enabled."
+                return "Dashboard started."
             end
         end
     )
@@ -1254,7 +1241,6 @@ function TrmnlDisplay:addToMainMenu(menu_items)
         text = _("TRMNL Display"),
         sorting_hint = "tools",
         sub_item_table = {
-            self:createStartInteractiveMenuItem(),
             self:createFetchMenuItem(),
             self:createConfigMenuItem(),
             self:createAutoRefreshToggle(),
@@ -1285,15 +1271,10 @@ function TrmnlDisplay:onTrmnlFetch()
 end
 
 function TrmnlDisplay:onTrmnlStartInteractive()
-    logger.info("TRMNL: Starting interactive mode")
-    -- If auto-refresh is already enabled, we just set the flag but don't
-    -- touch the persistent setting.
-    self.interactive_mode = true
-    if not self.auto_refresh_enabled then
-        self:startAutoRefresh()
-    else
-        -- Already running, but ensure image is displayed
+    if self.auto_refresh_enabled then
         self:fetchAndDisplay()
+    else
+        self:startAutoRefresh()
     end
 end
 

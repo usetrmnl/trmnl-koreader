@@ -284,6 +284,13 @@ describe("TRMNL display plugin", function()
             instance.image_widget:onGesture({ ges = ges, pos = Geom:new{ x = 10, y = 10 } })
         end
 
+        it("stops refreshing when the dashboard is closed", function()
+            local instance = dashboard(nil)
+            instance.auto_refresh_enabled = true
+            send(instance, "tap")
+            assert.is_false(instance.auto_refresh_enabled)
+        end)
+
         it("closes on tap for installs without the setting", function()
             local instance = dashboard(nil)
             send(instance, "tap")

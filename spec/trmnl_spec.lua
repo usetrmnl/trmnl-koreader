@@ -367,4 +367,31 @@ describe("TRMNL display plugin", function()
             assert.is_nil(instance.image_widget)
         end)
     end)
+
+    it("follows the server's refresh rate", function()
+        local instance = setmetatable({ settings = { refresh_interval = 1800 }, saveSettings = function() end },
+            { __index = TrmnlDisplay })
+        instance:updateRefreshInterval({ refresh_rate = 600 })
+        assert.is_equal(600, instance.settings.refresh_interval)
+    end)
+
+    it("saves each connection setting from the form", function()
+        local UIManager = require("ui/uimanager")
+        stub(UIManager, "show")
+        stub(UIManager, "close")
+        local instance = setmetatable({
+            settings = {}, getMacAddress = function() return nil end,
+            saveSettings = function() end, showInfo = function() end,
+        }, { __index = TrmnlDisplay })
+        instance:showConfigDialog()
+        local typed = { "key-123", "http://192.168.1.7:2300", "MAC", "AA:BB:CC:DD:EE:FF" }
+        for index, text in ipairs(typed) do instance.config_dialog.input_fields[index]:setText(text) end
+        for _, row in ipairs(instance.config_dialog.buttons) do
+            for _, button in ipairs(row) do if button.text == "Save" then button.callback() end end
+        end
+        UIManager.show:revert()
+        UIManager.close:revert()
+        assert.same({ "key-123", "http://192.168.1.7:2300", "MAC", "AA:BB:CC:DD:EE:FF" },
+            { instance.settings.api_key, instance.settings.base_url, instance.settings.mac_header_name, instance.settings.mac_address })
+    end)
 end)

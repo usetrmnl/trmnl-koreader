@@ -94,7 +94,6 @@ TrmnlDisplay.default_settings = {
     api_key = nil,
     base_url = "https://trmnl.app",
     refresh_interval = 1800,
-    use_server_refresh_rate = false,
     refresh_type = "ui",
     show_notifications = true,
     mac_header_name = nil,  -- Header name for MAC address (configurable for BYOS)
@@ -655,7 +654,7 @@ end
 --[[--
 Schedule the next refresh if auto-refresh is enabled.
 
-Uses the configured refresh_interval to schedule the next fetch cycle.
+Uses the last refresh rate the server sent to schedule the next fetch cycle.
 Unschedules any existing pending task to prevent double-scheduling.
 ]]
 function TrmnlDisplay:scheduleNextRefresh()
@@ -686,12 +685,12 @@ function TrmnlDisplay:handleFetchError(error_message)
 end
 
 --[[--
-Update refresh interval from server response if configured to do so.
+Follow the refresh rate the server sends with each screen.
 
 @tparam table response API response containing optional refresh_rate field
 ]]
 function TrmnlDisplay:updateRefreshInterval(response)
-    if not self.settings.use_server_refresh_rate or not response.refresh_rate then
+    if not response.refresh_rate then
         return
     end
 
@@ -994,7 +993,6 @@ Show configuration dialog for basic settings.
 Uses MultiInputDialog which provides multiple input fields in one dialog:
 - API Key (password-masked text input)
 - Base URL (text input)
-- Refresh Interval (number input)
 
 Fields are retrieved via getFields() which returns array of values in order.
 ]]
@@ -1018,11 +1016,6 @@ function TrmnlDisplay:showConfigDialog()
                 text = self.settings.base_url or "https://trmnl.app",
                 hint = _("TRMNL base URL"),
                 input_type = "string",
-            },
-            {
-                text = tostring(self.settings.refresh_interval or 1800),
-                hint = _("Refresh interval (seconds)"),
-                input_type = "number",
             },
             {
                 text = self.settings.mac_header_name or "ID",
@@ -1051,9 +1044,8 @@ function TrmnlDisplay:showConfigDialog()
                         local fields = self.config_dialog:getFields()
                         self.settings.api_key = fields[1]
                         self.settings.base_url = fields[2]
-                        self.settings.refresh_interval = tonumber(fields[3]) or 1800
-                        self.settings.mac_header_name = fields[4]
-                        self.settings.mac_address = fields[5] ~= "" and fields[5] or nil
+                        self.settings.mac_header_name = fields[3]
+                        self.settings.mac_address = fields[4] ~= "" and fields[4] or nil
                         self:saveSettings()
                         UIManager:close(self.config_dialog)
                         self:showInfo("TRMNL settings saved.")
@@ -1154,21 +1146,6 @@ function TrmnlDisplay:createAutoRefreshToggle()
     )
 end
 
-function TrmnlDisplay:createServerRefreshToggle()
-    return self:createToggleMenuItem(
-        "Use manual refresh interval",
-        "Use server refresh interval",
-        function() return self.settings.use_server_refresh_rate end,
-        function()
-            self.settings.use_server_refresh_rate = not self.settings.use_server_refresh_rate
-            self:saveSettings()
-            return self.settings.use_server_refresh_rate
-                and "Will use server's recommended refresh interval"
-                or "Will use your manual refresh interval"
-        end
-    )
-end
-
 function TrmnlDisplay:createNotificationsToggle()
     return self:createToggleMenuItem(
         "Hide status notifications",
@@ -1199,7 +1176,6 @@ function TrmnlDisplay:addToMainMenu(menu_items)
             self:createFetchMenuItem(),
             self:createConfigMenuItem(),
             self:createAutoRefreshToggle(),
-            self:createServerRefreshToggle(),
             self:createNotificationsToggle(),
             {
                 text = _("Dashboard gestures"),

@@ -104,20 +104,22 @@ describe("TRMNL display plugin", function()
         assert.is_nil(headers["ID"])
     end)
 
-    it("shows why a request could not reach the server", function()
-        local seen
+    it("shows one message saying why a request could not reach the server", function()
+        local shown = {}
         local real_http = package.loaded["socket.http"]
         package.loaded["socket.http"] = {
             request = function() return nil, "host or service not provided, or not known" end,
         }
         local instance = setmetatable({
             settings  = { api_key = "test-key", base_url = "http://truenas.local:4567" },
-            showError = function(_, msg) seen = msg end,
+            auto_refresh_enabled = true,
+            retry_manager = { count = 1, getDelay = function() return 120 end },
+            showError = function(_, message) table.insert(shown, message) end,
         }, { __index = TrmnlDisplay })
 
-        instance:fetchScreenMetadata()
+        instance:_performFetch()
         package.loaded["socket.http"] = real_http
-        assert.matches("host or service not provided", seen)
+        assert.same({ "Failed to reach the server: host or service not provided, or not known. Will retry in 120 seconds." }, shown)
     end)
 
     describe("auto-refresh", function()

@@ -71,7 +71,6 @@ local TrmnlDisplay = WidgetContainer:extend {
 
     refresh_task = nil,
     auto_refresh_enabled = false,
-    auto_refresh_scheduled = false,
     image_widget = nil,
     last_image_path = nil,
     last_image_filename = nil,
@@ -643,13 +642,12 @@ end
 --[[--
 Unschedule any pending refresh task.
 
-Safely removes any scheduled refresh task and updates the flag.
+Safely removes any scheduled refresh task.
 Safe to call even if no task is scheduled.
 ]]
 function TrmnlDisplay:unscheduleRefreshTask()
     if self.refresh_task then
         UIManager:unschedule(self.refresh_task)
-        self.auto_refresh_scheduled = false
         logger.dbg("TRMNL: Unscheduled refresh task")
     end
 end
@@ -671,37 +669,6 @@ function TrmnlDisplay:scheduleNextRefresh()
     local interval = self.settings.refresh_interval or self.CONSTANTS.TIMING.DEFAULT_REFRESH_INTERVAL
     logger.info("TRMNL: Scheduling next refresh in", interval, "seconds")
     UIManager:scheduleIn(interval, self.refresh_task)
-    self.auto_refresh_scheduled = true
-end
-
---[[--
-Check if scheduling state is valid.
-@treturn boolean true if state is valid
-]]
-function TrmnlDisplay:isScheduleStateValid()
-    if self.auto_refresh_enabled then
-        return self.auto_refresh_scheduled
-    else
-        return not self.auto_refresh_scheduled
-    end
-end
-
---[[--
-Validate and fix scheduling state.
-Ensures exactly one task when enabled, zero tasks when disabled.
-]]
-function TrmnlDisplay:validateAndFixScheduleState()
-    if self:isScheduleStateValid() then
-        return
-    end
-
-    if self.auto_refresh_enabled then
-        logger.warn("TRMNL: Auto-refresh enabled but no task scheduled - fixing!")
-        self:scheduleNextRefresh()
-    else
-        logger.warn("TRMNL: Auto-refresh disabled but task still scheduled - fixing!")
-        self:unscheduleRefreshTask()
-    end
 end
 
 --[[--
@@ -800,7 +767,6 @@ function TrmnlDisplay:finalizeFetchSuccess(image_path)
     self.retry_manager:reset()
 
     self:scheduleNextRefresh()
-    self:validateAndFixScheduleState()
 end
 
 --[[--
@@ -819,7 +785,6 @@ function TrmnlDisplay:fetchAndDisplay()
         local retry_delay = self.retry_manager:increment()
         logger.info("TRMNL: Retry booked in", retry_delay, "seconds in case this attempt fails")
         UIManager:scheduleIn(retry_delay, self.refresh_task)
-        self.auto_refresh_scheduled = true
     end
 
     NetworkMgr:runWhenConnected(function()
@@ -894,18 +859,12 @@ Flow:
 4. fetchAndDisplay() will schedule subsequent refreshes
 ]]
 function TrmnlDisplay:startAutoRefresh()
-    if self.auto_refresh_enabled and self.auto_refresh_scheduled then
-        logger.info("TRMNL: Auto-refresh already active")
-        return
-    end
-
     logger.info("TRMNL: Starting auto-refresh")
 
     -- NOTE: Ensure clean state before starting
     self:unscheduleRefreshTask()
 
     self.auto_refresh_enabled = true
-    self.auto_refresh_scheduled = false -- Will be set to true after first fetch schedules next
     self:saveSettings()                 -- Persist across KOReader restarts
 
     self:showProgress("Starting auto-refresh...", "Fetching first screen")
@@ -938,7 +897,6 @@ function TrmnlDisplay:stopAutoRefresh()
     self:unscheduleRefreshTask()
 
     self.auto_refresh_enabled = false
-    self.auto_refresh_scheduled = false
     self:saveSettings() -- Persist across KOReader restarts
 
     logger.dbg("TRMNL: Auto-refresh stopped, all tasks unscheduled")
@@ -984,7 +942,7 @@ function TrmnlDisplay:onResume()
     if Device:hasWifiRestore() and NetworkMgr.wifi_was_on and
         G_reader_settings:isTrue("auto_restore_wifi") then
         if self.auto_refresh_enabled then
-            self:validateAndFixScheduleState()
+            self:scheduleNextRefresh()
         end
         return
     end

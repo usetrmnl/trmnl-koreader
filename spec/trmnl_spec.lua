@@ -150,6 +150,27 @@ describe("TRMNL display plugin", function()
             UIManager:unschedule(instance.refresh_task)
             assert.is_true(scheduled)
         end)
+
+        it("books the next refresh when Wi-Fi restores itself after sleep", function()
+            local Device = require("device")
+            stub(Device, "hasWifiRestore", true)
+            local wifi_was_on, auto_restore = NetworkMgr.wifi_was_on, G_reader_settings:readSetting("auto_restore_wifi")
+            NetworkMgr.wifi_was_on = true
+            G_reader_settings:saveSetting("auto_restore_wifi", true)
+            local instance = setmetatable({
+                auto_refresh_enabled = true,
+                settings = { refresh_interval = 900 },
+                refresh_task = function() end,
+            }, { __index = TrmnlDisplay })
+
+            instance:onResume()
+            Device.hasWifiRestore:revert()
+            NetworkMgr.wifi_was_on = wifi_was_on
+            G_reader_settings:saveSetting("auto_restore_wifi", auto_restore)
+            local scheduled = is_scheduled(instance.refresh_task)
+            UIManager:unschedule(instance.refresh_task)
+            assert.is_true(scheduled)
+        end)
     end)
 
     it("identifies the running plugin version even when old settings saved another", function()

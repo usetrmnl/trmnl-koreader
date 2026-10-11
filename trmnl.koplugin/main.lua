@@ -660,28 +660,6 @@ function TrmnlDisplay:unscheduleRefreshTask()
 end
 
 --[[--
-Prevent device from automatically suspending (sleeping).
-
-Uses KOReader's standby prevention API to keep device awake while auto-refresh is active.
-This ensures the dashboard remains visible and refreshes continue.
-Works on all devices (Kindle, Kobo, PocketBook, etc.).
-]]
-function TrmnlDisplay:preventAutoSuspend()
-    UIManager:preventStandby()
-    logger.info("TRMNL: Device sleep prevented (auto-refresh active)")
-end
-
---[[--
-Re-enable device auto-suspend (sleeping).
-
-Restores normal power management behavior when auto-refresh is disabled.
-]]
-function TrmnlDisplay:allowAutoSuspend()
-    UIManager:allowStandby()
-    logger.info("TRMNL: Device sleep re-enabled (normal behavior)")
-end
-
---[[--
 Schedule the next refresh if auto-refresh is enabled.
 
 Uses the configured refresh_interval to schedule the next fetch cycle.
@@ -935,9 +913,6 @@ function TrmnlDisplay:startAutoRefresh()
     self.auto_refresh_scheduled = false -- Will be set to true after first fetch schedules next
     self:saveSettings()                 -- Persist across KOReader restarts
 
-    -- Prevent device from sleeping while displaying dashboard
-    self:preventAutoSuspend()
-
     self:showProgress("Starting auto-refresh...", "Fetching first screen")
 
     -- Start immediately - will display the image and schedule next refresh
@@ -969,9 +944,6 @@ function TrmnlDisplay:stopAutoRefresh()
     self.auto_refresh_enabled = false
     self.auto_refresh_scheduled = false
     self:saveSettings() -- Persist across KOReader restarts
-
-    -- Re-enable device sleep
-    self:allowAutoSuspend()
 
     logger.dbg("TRMNL: Auto-refresh stopped, all tasks unscheduled")
 end

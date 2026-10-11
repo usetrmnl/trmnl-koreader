@@ -81,10 +81,6 @@ local TrmnlDisplay = WidgetContainer:extend {
 }
 
 TrmnlDisplay.CONSTANTS = {
-    RETRY = {
-        BASE_DELAY = 60,
-        MIN_DELAY = 60,
-    },
     TIMING = {
         DEFAULT_REFRESH_INTERVAL = 1800,
     },

@@ -6,8 +6,8 @@ Technical architecture, development setup, and extension guide for the TRMNL KOR
 
 ### Components
 
-- **`TrmnlDisplay`** (main.lua:63-1168) - Main plugin class extending `WidgetContainer`
-- **`RetryManager`** (main.lua:31-57) - Exponential backoff for failed requests
+- **`TrmnlDisplay`** - Main plugin class extending `WidgetContainer`
+- **`RetryManager`** - Exponential backoff for failed requests
 - **Network layer** - LuaSocket (HTTP/HTTPS)
 - **UI integration** - KOReader's `UIManager` and widget system
 
@@ -21,15 +21,15 @@ Technical architecture, development setup, and extension guide for the TRMNL KOR
 
 The plugin implements standard KOReader hooks:
 
-- **`init()`** (main.lua:109) - Load settings, restore state, schedule auto-refresh
-- **`onSuspend()`** (main.lua:893) - Pause refresh during sleep (battery savings)
-- **`onResume()`** (main.lua:910) - Fetch immediately on wake if auto-refresh enabled
-- **`onFlushSettings()`** (main.lua:140) - Persist settings to disk
-- **`onCloseWidget()`** (main.lua:935) - Cleanup on shutdown
+- **`init()`** - Load settings, restore state, schedule auto-refresh
+- **`onSuspend()`** - Pause refresh during sleep (battery savings)
+- **`onResume()`** - Fetch immediately on wake if auto-refresh enabled
+- **`onFlushSettings()`** - Persist settings to disk
+- **`onCloseWidget()`** - Cleanup on shutdown
 
 ### Data Flow
 
-See main.lua:745-796 for complete fetch cycle implementation:
+The fetch cycle:
 
 1. `fetchAndDisplay()` → `NetworkMgr:runWhenConnected()`
 2. `fetchScreenMetadata()` → API request with device headers
@@ -52,7 +52,7 @@ GET https://trmnl.app/api/display
 | `access-token` | User's API key | `abc123...` |
 | `percent-charged` | Battery % (0-100) | `85` |
 | `png-width` / `png-height` | Screen dimensions | `1448` / `1072` |
-| `rssi` | WiFi signal strength | `0` (TODO) |
+| `rssi` | Wi-Fi signal in dBm, left out when unknown | `-63` |
 
 
 ### Response

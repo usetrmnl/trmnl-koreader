@@ -28,7 +28,7 @@ For a device that sits on a desk and updates itself:
 1. Stop KOReader from sleeping:
    - **Tools → More tools → Keep alive** — enable
    - **Settings → Device → Auto suspend timeout** — disable
-2. **Tools → TRMNL Display → Start dashboard**. The first fetch happens immediately, then repeats on your refresh interval.
+2. **Tools → TRMNL Display → Start dashboard**. The first fetch happens immediately, then repeats at the refresh rate the server sends.
 3. Leave KOReader on that screen.
 
 Closing the dashboard stops it. To start again later, use **Start dashboard**.
@@ -44,7 +44,7 @@ This is the difference between a few days and a few weeks of runtime.
   - Uncheck **Wi-Fi connection** so Wi-Fi is not permanently on
   - **Action when Wi-Fi is off**: `turn on`
   - **Action when done with Wi-Fi**: `turn off`
-- Use a longer refresh interval. Every fetch wakes the radio and repaints the screen.
+- Set a longer refresh rate for the device on your TRMNL dashboard (or BYOS server). Every fetch wakes the radio and repaints the screen.
 - Keep **E-ink refresh type** on **UI (balanced)**. Only switch to **Full** when image quality matters more than power.
 
 ## Settings
@@ -55,13 +55,13 @@ This is the difference between a few days and a few weeks of runtime.
 |---|---|
 | **API Key** | Your device API token |
 | **Base URL** | Server to fetch from. Defaults to `https://trmnl.app`; change it for BYOS |
-| **Refresh Interval** | Seconds between fetches (default 1800) |
 | **MAC address header name** | Header the MAC is sent under. Defaults to `ID`, which is what TRMNL and most BYOS servers expect |
 | **MAC address** | Leave blank to auto-detect. Set it manually if detection fails or you need to send a specific value |
 
+How often the screen refreshes comes from the server: set it for the device on your TRMNL dashboard (or your BYOS server).
+
 Also in the **TRMNL Display** menu:
 
-- **Use server refresh interval** — let the server's `refresh_rate` override your local interval. Recommended, since you can then retune timing from the dashboard without touching the device.
 - **E-ink refresh type** — UI (balanced), Full (best quality), Flash UI, or Partial (fastest)
 - **Dashboard gestures** — **Tap closes the screen** (default), or **Hold closes, tap fetches a new screen**
 - **Page-turn buttons** — on devices that have them, a page-turn button fetches the next screen and any other button closes the dashboard

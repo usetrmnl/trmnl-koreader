@@ -152,6 +152,11 @@ describe("TRMNL display plugin", function()
         end)
     end)
 
+    it("identifies the running plugin version even when old settings saved another", function()
+        local headers = headers_for({ user_agent = "trmnl-display/0.1.0-koreader" }, nil, nil)
+        assert.is_equal(TrmnlDisplay.USER_AGENT, headers["User-Agent"])
+    end)
+
     it("sends the measured signal level", function()
         assert.is_equal("-56", headers_for({}, nil, -56)["rssi"])
     end)

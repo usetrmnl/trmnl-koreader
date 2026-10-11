@@ -80,6 +80,8 @@ local TrmnlDisplay = WidgetContainer:extend {
     retry_manager = nil,
 }
 
+TrmnlDisplay.USER_AGENT = "trmnl-display/0.2.0-koreader"
+
 TrmnlDisplay.CONSTANTS = {
     TIMING = {
         DEFAULT_REFRESH_INTERVAL = 1800,
@@ -94,7 +96,6 @@ TrmnlDisplay.default_settings = {
     api_key = nil,
     base_url = "https://trmnl.app",
     refresh_interval = 1800,
-    user_agent = "trmnl-display/0.1.0-koreader",
     use_server_refresh_rate = false,
     refresh_type = "ui",
     show_notifications = true,
@@ -351,7 +352,7 @@ function TrmnlDisplay:fetchScreenMetadata()
             ["battery-charging"] = battery_charging,
             ["rssi"] = rssi and tostring(rssi),        -- Omitted when unknown; the server reads 0 as full strength
             [mac_header_name] = mac_address,           -- MAC address with custom header name
-            ["User-Agent"] = self.settings.user_agent, -- Plugin identification
+            ["User-Agent"] = self.USER_AGENT,          -- Plugin identification
         },
         sink = socketutil.table_sink(sink),            -- Response body stored in 'sink' table
         -- SSL/TLS configuration for HTTPS
@@ -423,7 +424,7 @@ function TrmnlDisplay:downloadImage(image_url, filepath)
         url = image_url,
         sink = socketutil.file_sink(file),
         headers = {
-            ["User-Agent"] = self.settings.user_agent,
+            ["User-Agent"] = self.USER_AGENT,
         },
         -- SSL/TLS configuration (same as API request)
         protocol = "any",

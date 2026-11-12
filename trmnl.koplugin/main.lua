@@ -331,7 +331,8 @@ function TrmnlDisplay:fetchScreenMetadata(special_function)
     if Device:hasBattery() then
         local powerd = Device:getPowerDevice()
         percent_charged = tostring(powerd:getCapacity()) -- Returns 0-100 percentage
-        battery_charging = tostring(powerd:isCharging())
+        -- NOTE: sent as 1 or 0 like TRMNL firmware; Terminus rejects any request where this header is not an integer.
+        battery_charging = powerd:isCharging() and "1" or "0"
     end
     local rssi = self:getRssi()
 

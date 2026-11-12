@@ -196,12 +196,20 @@ describe("TRMNL display plugin", function()
         assert.is_nil(headers_for({}, nil, nil)["rssi"])
     end)
 
-    it("sends whether the battery is charging", function()
+    local function charging_header(charging)
         local Device = require("device")
-        stub(Device, "getPowerDevice", { getCapacity = function() return 80 end, isCharging = function() return true end })
+        stub(Device, "getPowerDevice", { getCapacity = function() return 80 end, isCharging = function() return charging end })
         local headers = headers_for({}, nil, nil)
         Device.getPowerDevice:revert()
-        assert.is_equal("true", headers["battery-charging"])
+        return headers["battery-charging"]
+    end
+
+    it("sends 1 when the battery is charging", function()
+        assert.is_equal("1", charging_header(true))
+    end)
+
+    it("sends 0 when the battery is not charging", function()
+        assert.is_equal("0", charging_header(false))
     end)
 
     describe("getRssi", function()

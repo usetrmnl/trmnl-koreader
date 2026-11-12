@@ -99,6 +99,7 @@ TrmnlDisplay.default_settings = {
     show_notifications = true,
     mac_header_name = nil,  -- Header name for MAC address (configurable for BYOS)
     mac_address = nil,  -- Manual MAC address override (nil = auto-detect)
+    tap_navigation = false,  -- Tap left/right half to ask the server for the previous/next screen
 }
 
 --[[--
@@ -301,10 +302,13 @@ Makes HTTP GET request to /api/display endpoint with headers:
 - rssi: WiFi signal strength in dBm, when known
 - battery-charging: whether the device is charging
 - User-Agent: Plugin version string
+- Special-Function: screen_forward or screen_backward, only when the user asks
+  for another screen with tap navigation
 
+@tparam[opt] string special_function Playlist move for the server to make first
 @treturn table|nil Decoded JSON response table, or nil on error
 ]]
-function TrmnlDisplay:fetchScreenMetadata()
+function TrmnlDisplay:fetchScreenMetadata(special_function)
     if not self.settings.api_key or self.settings.api_key == "" then
         return nil, "Please configure your TRMNL API key first"
     end
@@ -369,6 +373,7 @@ function TrmnlDisplay:fetchScreenMetadata()
             ["battery-charging"] = battery_charging,
             ["rssi"] = rssi and tostring(rssi),        -- Omitted when unknown; the server reads 0 as full strength
             [mac_header_name] = mac_address,           -- MAC address with custom header name
+            ["Special-Function"] = special_function,   -- Omitted unless the user asked for another screen
             ["User-Agent"] = self.USER_AGENT,          -- Plugin identification
         },
         sink = socketutil.table_sink(sink),            -- Response body stored in 'sink' table
@@ -521,9 +526,14 @@ function TrmnlDisplay:displayImage(image_path)
         return true
     end
 
+    local tap_navigation = self.settings.tap_navigation
+
     self.image_widget.onAnyKeyPressed = function(widget, _, key)
-        if key and (key:match({ Input.group.PgFwd }) or key:match({ Input.group.PgBack })) then
-            return widget.onGestureFetch()
+        if key and key:match({ Input.group.PgFwd }) then
+            return tap_navigation and widget.onGestureNext() or widget.onGestureFetch()
+        end
+        if key and key:match({ Input.group.PgBack }) then
+            return tap_navigation and widget.onGesturePrevious() or widget.onGestureFetch()
         end
         return widget.onGestureClose()
     end
@@ -533,12 +543,33 @@ function TrmnlDisplay:displayImage(image_path)
         return true
     end
 
+    self.image_widget.onGestureNext = function()
+        self:onTrmnlNavigate("screen_forward")
+        return true
+    end
+
+    self.image_widget.onGesturePrevious = function()
+        self:onTrmnlNavigate("screen_backward")
+        return true
+    end
+
     if Device:isTouchDevice() then
-        local function anywhere(ges)
-            return { GestureRange:new { ges = ges, range = Geom:new { x = 0, y = 0, w = screen_width, h = screen_height } } }
+        local function area(ges, x, w)
+            return { GestureRange:new { ges = ges, range = Geom:new { x = x, y = 0, w = w, h = screen_height } } }
         end
+        local function anywhere(ges)
+            return area(ges, 0, screen_width)
+        end
+        local half = math.floor(screen_width / 2)
+        -- Tap navigation needs every tap, so hold always closes the screen while it is on.
+        if tap_navigation then
+            self.image_widget.ges_events = {
+                GestureClose = anywhere("hold"),
+                GesturePrevious = area("tap", 0, half),
+                GestureNext = area("tap", half, screen_width - half),
+            }
         -- Hold to close stops accidental exits on a shared dashboard; tap then fetches a new screen.
-        if self.settings.close_gesture == "hold" then
+        elseif self.settings.close_gesture == "hold" then
             self.image_widget.ges_events = { GestureClose = anywhere("hold"), GestureFetch = anywhere("tap") }
         else
             self.image_widget.ges_events = { GestureClose = anywhere("tap") }
@@ -781,8 +812,8 @@ Main workflow - fetches screen from API and displays it.
 Called by user action, auto-refresh timer, or network availability callback.
 Uses pipeline pattern for clear flow control and early exits on errors.
 ]]
-function TrmnlDisplay:fetchAndDisplay()
-    logger.info("TRMNL: Starting fetch and display cycle")
+function TrmnlDisplay:fetchAndDisplay(special_function)
+    logger.info("TRMNL: Starting fetch and display cycle", special_function or "")
 
     -- NOTE: a failed Wi-Fi connection never runs the callback, so the retry is booked before trying.
     -- A successful fetch replaces it with the normal refresh.
@@ -794,7 +825,7 @@ function TrmnlDisplay:fetchAndDisplay()
     end
 
     NetworkMgr:runWhenConnected(function()
-        self:_doFetchAndDisplay()
+        self:_doFetchAndDisplay(special_function)
     end)
 end
 
@@ -805,20 +836,20 @@ Separated from fetchAndDisplay to work with NetworkMgr:runWhenConnected().
 Includes a small delay after WiFi connection to ensure the network stack is fully ready
 for HTTP requests, as some devices report "connected" before being able to make requests.
 ]]
-function TrmnlDisplay:_doFetchAndDisplay()
+function TrmnlDisplay:_doFetchAndDisplay(special_function)
     -- Give WiFi a moment to fully stabilize after connection
     -- This prevents "connected but not really" issues on some devices
     logger.info("TRMNL: WiFi connected, waiting 2 seconds for network to stabilize...")
     UIManager:scheduleIn(2, function()
-        self:_performFetch()
+        self:_performFetch(special_function)
     end)
 end
 
 --[[--
 Perform the actual fetch and display after WiFi is ready.
 ]]
-function TrmnlDisplay:_performFetch()
-    local response, reason = self:fetchScreenMetadata()
+function TrmnlDisplay:_performFetch(special_function)
+    local response, reason = self:fetchScreenMetadata(special_function)
     if not response or not response.image_url then
         -- NOTE: the API reports device/token problems as HTTP 200 with
         -- {"status": 500, "error": "..."}, so the only place that detail survives is here.
@@ -1153,6 +1184,20 @@ function TrmnlDisplay:createAutoRefreshToggle()
     )
 end
 
+function TrmnlDisplay:createTapNavigationToggle()
+    return {
+        text = _("Tap left or right to change screen"),
+        help_text = _("Tap the right half for the next screen and the left half for the previous one. Hold closes the screen while this is on. Needs a server that reads the Special-Function header, such as Terminus."),
+        checked_func = function()
+            return self.settings.tap_navigation == true
+        end,
+        callback = function()
+            self.settings.tap_navigation = not self.settings.tap_navigation
+            self:saveSettings()
+        end,
+    }
+end
+
 function TrmnlDisplay:createNotificationsToggle()
     return self:createToggleMenuItem(
         "Hide status notifications",
@@ -1189,6 +1234,7 @@ function TrmnlDisplay:addToMainMenu(menu_items)
                 sub_item_table = {
                     self:createRadioMenuItem("Tap closes the screen", "close_gesture", nil),
                     self:createRadioMenuItem("Hold closes, tap fetches a new screen", "close_gesture", "hold"),
+                    self:createTapNavigationToggle(),
                 }
             },
             {
@@ -1206,6 +1252,14 @@ end
 
 function TrmnlDisplay:onTrmnlFetch()
     self:fetchAndDisplay()
+end
+
+--[[--
+Ask the server to move the playlist, then show the screen it returns.
+@tparam string special_function "screen_forward" or "screen_backward"
+]]
+function TrmnlDisplay:onTrmnlNavigate(special_function)
+    self:fetchAndDisplay(special_function)
 end
 
 function TrmnlDisplay:onTrmnlStartInteractive()

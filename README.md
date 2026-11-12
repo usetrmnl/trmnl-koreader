@@ -64,7 +64,8 @@ Also in the **TRMNL Display** menu:
 
 - **E-ink refresh type** — UI (balanced), Full (best quality), Flash UI, or Partial (fastest)
 - **Dashboard gestures** — **Tap closes the screen** (default), or **Hold closes, tap fetches a new screen**
-- **Page-turn buttons** — on devices that have them, a page-turn button fetches the next screen and any other button closes the dashboard
+- **Tap left or right to change screen** (in **Dashboard gestures**, off by default) — a tap on the right half asks the server for the next playlist screen, and a tap on the left half for the previous one. Hold closes the screen while this is on. The plugin sends `Special-Function: screen_forward` or `screen_backward`, so the server must support that header. [Terminus](https://github.com/usetrmnl/terminus) 0.81.0 and later does, and it moves the playlist even in Manual mode.
+- **Page-turn buttons** — on devices that have them, a page-turn button fetches the next screen and any other button closes the dashboard. With tap navigation on, the forward and back buttons ask for the next and previous screen.
 - **Show status notifications** — errors are always shown regardless
 
 ## Gestures

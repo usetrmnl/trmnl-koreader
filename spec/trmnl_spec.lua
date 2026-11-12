@@ -64,7 +64,7 @@ describe("TRMNL display plugin", function()
     -- Captures the headers of a real fetchScreenMetadata call by standing in for
     -- the HTTPS transport. The response never parses, which is fine - only the
     -- outgoing request is under test.
-    local function headers_for(settings, detected_mac, rssi)
+    local function headers_for(settings, detected_mac, rssi, special_function)
         local captured
         local real_https = package.loaded["ssl.https"]
         package.loaded["ssl.https"] = {
@@ -80,10 +80,18 @@ describe("TRMNL display plugin", function()
             showError     = function() end,
         }, { __index = TrmnlDisplay })
 
-        instance:fetchScreenMetadata()
+        instance:fetchScreenMetadata(special_function)
         package.loaded["ssl.https"] = real_https
         return captured.headers
     end
+
+    it("leaves out Special-Function on a plain refresh", function()
+        assert.is_nil(headers_for({}, nil)["Special-Function"])
+    end)
+
+    it("sends the requested playlist move as Special-Function", function()
+        assert.is_equal("screen_backward", headers_for({}, nil, nil, "screen_backward")["Special-Function"])
+    end)
 
     it("sends the detected MAC under the ID header by default", function()
         assert.is_equal("AA:BB:CC:DD:EE:FF", headers_for({}, "AA:BB:CC:DD:EE:FF")["ID"])
@@ -188,12 +196,20 @@ describe("TRMNL display plugin", function()
         assert.is_nil(headers_for({}, nil, nil)["rssi"])
     end)
 
-    it("sends whether the battery is charging", function()
+    local function charging_header(charging)
         local Device = require("device")
-        stub(Device, "getPowerDevice", { getCapacity = function() return 80 end, isCharging = function() return true end })
+        stub(Device, "getPowerDevice", { getCapacity = function() return 80 end, isCharging = function() return charging end })
         local headers = headers_for({}, nil, nil)
         Device.getPowerDevice:revert()
-        assert.is_equal("true", headers["battery-charging"])
+        return headers["battery-charging"]
+    end
+
+    it("sends 1 when the battery is charging", function()
+        assert.is_equal("1", charging_header(true))
+    end)
+
+    it("sends 0 when the battery is not charging", function()
+        assert.is_equal("0", charging_header(false))
     end)
 
     describe("getRssi", function()
@@ -354,6 +370,69 @@ describe("TRMNL display plugin", function()
             local instance = dashboard(nil)
             press(instance, "Back")
             assert.is_nil(instance.image_widget)
+        end)
+
+        describe("with tap navigation", function()
+            local function navigating()
+                local instance = setmetatable({
+                    settings = { tap_navigation = true },
+                    fetches = 0,
+                    moves = {},
+                    onTrmnlFetch = function(self) self.fetches = self.fetches + 1 end,
+                    onTrmnlNavigate = function(self, special_function)
+                        table.insert(self.moves, special_function)
+                    end,
+                }, { __index = TrmnlDisplay })
+                instance:displayImage("dashboard.png")
+                return instance
+            end
+
+            local function tap_at(instance, x)
+                instance.image_widget:onGesture({ ges = "tap", pos = Geom:new{ x = x, y = 10 } })
+            end
+
+            it("asks for the previous screen on a left tap", function()
+                local instance = navigating()
+                tap_at(instance, 10)
+                assert.are.same({ "screen_backward" }, instance.moves)
+                assert.is_not_nil(instance.image_widget)
+            end)
+
+            it("asks for the next screen on a right tap", function()
+                local instance = navigating()
+                tap_at(instance, Device.screen:getWidth() - 10)
+                assert.are.same({ "screen_forward" }, instance.moves)
+                assert.is_not_nil(instance.image_widget)
+            end)
+
+            it("closes on hold", function()
+                local instance = navigating()
+                send(instance, "hold")
+                assert.is_nil(instance.image_widget)
+            end)
+
+            it("maps the page keys to next and previous", function()
+                local instance = navigating()
+                press(instance, "RPgFwd")
+                press(instance, "RPgBack")
+                assert.are.same({ "screen_forward", "screen_backward" }, instance.moves)
+                assert.is_equal(0, instance.fetches)
+            end)
+
+            it("is switched on from the menu", function()
+                local instance = setmetatable({ settings = {}, saveSettings = function() end },
+                    { __index = TrmnlDisplay })
+                local menu = {}
+                instance:addToMainMenu(menu)
+                for _, item in ipairs(menu.trmnl.sub_item_table) do
+                    if item.text == "Dashboard gestures" then
+                        for _, sub in ipairs(item.sub_item_table) do
+                            if sub.text == "Tap left or right to change screen" then sub.callback() end
+                        end
+                    end
+                end
+                assert.is_true(instance.settings.tap_navigation)
+            end)
         end)
 
         it("goes back to tap closing when chosen from the menu", function()

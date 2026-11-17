@@ -25,7 +25,7 @@ If the screen appears, you are done. Tap it (or press a button on non-touch devi
 
 For a device that sits on a desk and updates itself:
 
-1. Stop KOReader from sleeping:
+1. Stop KOReader from sleeping (on a Kindle, see [Sleep Between Refreshes](#sleep-between-refreshes-kindle) instead):
    - **Tools → More tools → Keep alive** — enable
    - **Settings → Device → Auto suspend timeout** — disable
 2. **Tools → TRMNL Display → Start dashboard**. The first fetch happens immediately, then repeats at the refresh rate the server sends.
@@ -47,6 +47,26 @@ This is the difference between a few days and a few weeks of runtime.
 - Set a longer refresh rate for the device on your TRMNL dashboard (or BYOS server). Every fetch wakes the radio and repaints the screen.
 - Keep **E-ink refresh type** on **UI (balanced)**. Only switch to **Full** when image quality matters more than power.
 
+## Sleep Between Refreshes (Kindle)
+
+On a Kindle without ads, the dashboard can sleep between refreshes instead of staying awake. A wake alarm brings it back for each fetch, so the battery lasts weeks instead of days. It needs KOReader 2022.07 or newer, and the option is greyed out on devices without a wake alarm.
+
+It is opt-in because Kindle power handling differs by model. If your Kindle stops updating with it on, turn it off and use Keep alive instead.
+
+1. **Tools → More tools → Keep alive** — disable. Leave **Auto suspend** as you like; the plugin does the sleeping.
+2. **Settings → Screen → Sleep screen:**
+   - **Wallpaper**: **Leave screen as-is**, so the dashboard stays visible while the Kindle sleeps
+   - Turn off the sleep screen message
+3. **Settings → Network → Action when Wi-Fi is off**: `turn on`. This is required: after sleep, Wi-Fi is off, and a prompt would block every fetch.
+4. **Tools → TRMNL Display → Sleep between refreshes**, then **Start dashboard**.
+
+What to expect:
+
+- The screen updates at the refresh rate the server sends, and the Kindle sleeps in between.
+- Pressing the power button wakes it and fetches a new screen at once. It goes back to sleep 2 minutes after the last new screen. Taps only work while it is awake.
+- If a fetch fails after the alarm, it sleeps and tries again later instead of staying awake. It shows no error message then, so the last screen stays clean. The error is in the KOReader log.
+- While charging, the Kindle may not sleep. The dashboard keeps refreshing anyway.
+
 ## Settings
 
 **Tools → TRMNL Display → Configure TRMNL**
@@ -66,6 +86,7 @@ Also in the **TRMNL Display** menu:
 - **Dashboard gestures** — **Tap closes the screen** (default), or **Hold closes, tap fetches a new screen**
 - **Page-turn buttons** — on devices that have them, a page-turn button fetches the next screen and any other button closes the dashboard
 - **Show status notifications** — errors are always shown regardless
+- **Sleep between refreshes** — Kindle only, see [Sleep Between Refreshes](#sleep-between-refreshes-kindle)
 
 ## Gestures
 

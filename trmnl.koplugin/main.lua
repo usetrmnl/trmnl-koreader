@@ -15,6 +15,7 @@ local InputContainer = require("ui/widget/container/inputcontainer")
 local LuaSettings = require("luasettings")
 local MultiInputDialog = require("ui/widget/multiinputdialog")
 local NetworkMgr = require("ui/network/manager")
+local PluginShare = require("pluginshare")
 local RenderImage = require("ui/renderimage")
 local Screen = Device.screen
 local Input = Device.input
@@ -88,7 +89,17 @@ TrmnlDisplay.CONSTANTS = {
         DEFAULT_IMAGE = "trmnl_screen.png",
         SCREENS_FOLDER = "trmnl-screens",
         API_KEY = "apikey.txt",
-    }
+    },
+    -- Sleep between refreshes (Kindle wake alarm), all in seconds
+    SLEEP = {
+        GRACE_SECONDS = 120,      -- stay awake this long after the user wakes the device
+        AFTER_DRAW_DELAY = 3,     -- let the e-ink refresh finish before sleeping
+        MIN_ALARM = 60,           -- shortest alarm, so a due refresh is not dropped
+        WATCHDOG_SECONDS = 90,    -- give up on a fetch after an alarm wake
+        WIFI_GUARD_SECONDS = 2,   -- how often to check that the Wi-Fi restore after a wake still runs
+        WIFI_RESTORES = 3,        -- most Wi-Fi restores after one wake, the first one included
+        HIBERNATION_MARGIN = 120, -- wake this long before the Kindle would hibernate
+    },
 }
 
 TrmnlDisplay.default_settings = {
@@ -99,6 +110,7 @@ TrmnlDisplay.default_settings = {
     show_notifications = true,
     mac_header_name = nil,  -- Header name for MAC address (configurable for BYOS)
     mac_address = nil,  -- Manual MAC address override (nil = auto-detect)
+    sleep_between_refreshes = false,  -- Suspend between refreshes, woken by the wake alarm
 }
 
 --[[--
@@ -120,10 +132,7 @@ function TrmnlDisplay:init()
         logger.info("TRMNL: API key auto-configured from file")
     end
 
-    -- Must be instance-specific for UIManager to track properly
-    self.refresh_task = function()
-        self:fetchAndDisplay()
-    end
+    self:createSleepTasks()
 
     Dispatcher:registerAction("trmnl_fetch_now", {category="none", event="TrmnlFetch", title=_("TRMNL: Fetch now"), general=true})
     Dispatcher:registerAction("trmnl_start_interactive", {category="none", event="TrmnlStartInteractive", title=_("TRMNL: Start dashboard"), general=true})
@@ -653,6 +662,50 @@ function TrmnlDisplay:showProgress(message, context)
 end
 
 --[[--
+Create the scheduled task functions.
+
+They must be instance-specific and stable, so UIManager:unschedule and
+WakeupMgr:removeTasks can find them again.
+]]
+function TrmnlDisplay:createSleepTasks()
+    self.refresh_task = function()
+        -- NOTE: the device can show the sleep screen without suspending (USB, charging),
+        -- so the wake alarm never fires. This timer then wakes it instead.
+        if self:sleepModeActive() and Device.screen_saver_mode then
+            self:leaveSleepScreen()
+        else
+            self:fetchAndDisplay()
+        end
+    end
+    self.wake_alarm_task = function()
+        self:onWakeAlarm()
+    end
+    self.sleep_task = function()
+        -- NOTE: on Kindle, suspending toggles the power button, so on the sleep screen it would wake the device.
+        if Device.screen_saver_mode then
+            return
+        end
+        -- NOTE: on Kindle, Keep alive sets powerd's preventScreenSaver, which silently ignores the request.
+        if PluginShare.keepalive then
+            logger.warn("TRMNL: Keep alive is on, the device cannot sleep")
+            if not self.keepalive_warned then
+                self.keepalive_warned = true
+                self:showError("Keep alive is on, so the device cannot sleep. Turn it off in Tools > More tools.")
+            end
+            return
+        end
+        logger.info("TRMNL: Asking KOReader to put the device to sleep")
+        UIManager:suspend()
+    end
+    self.watchdog_task = function()
+        self:onAlarmWakeTimeout()
+    end
+    self.wifi_guard_task = function()
+        self:checkWakeWifi()
+    end
+end
+
+--[[--
 Unschedule any pending refresh task.
 
 Safely removes any scheduled refresh task.
@@ -682,6 +735,16 @@ function TrmnlDisplay:scheduleNextRefresh()
     local interval = self.settings.refresh_interval or self.CONSTANTS.TIMING.DEFAULT_REFRESH_INTERVAL
     logger.info("TRMNL: Scheduling next refresh in", interval, "seconds")
     UIManager:scheduleIn(interval, self.refresh_task)
+    self.next_refresh_epoch = os.time() + interval
+
+    if self:sleepModeActive() then
+        UIManager:unschedule(self.watchdog_task)
+        if self.wake_kind == "alarm" then
+            self:sleepAgain(self.CONSTANTS.SLEEP.AFTER_DRAW_DELAY)
+        else
+            self:sleepAgain(self.CONSTANTS.SLEEP.GRACE_SECONDS)
+        end
+    end
 end
 
 --[[--
@@ -691,6 +754,15 @@ Report a failed fetch. The retry itself was already booked by fetchAndDisplay.
 ]]
 function TrmnlDisplay:handleFetchError(error_message)
     logger.err("TRMNL:", error_message, "(attempt", self.retry_manager.count, ")")
+
+    -- Retrying while awake drains the battery: sleep until the booked retry.
+    -- NOTE: no popup here. Nobody sees it, and it would stay on the e-ink screen through the sleep.
+    if self:sleepModeActive() and self.wake_kind == "alarm" then
+        UIManager:unschedule(self.watchdog_task)
+        self:sleepAgain(self.CONSTANTS.SLEEP.AFTER_DRAW_DELAY)
+        return
+    end
+
     if self.auto_refresh_enabled then
         self:showError(T(_("%1. Will retry in %2 seconds."), _(error_message), self.retry_manager:getDelay()))
     else
@@ -763,7 +835,12 @@ end
 Finalize successful fetch - cleanup, reset state, and schedule next refresh.
 ]]
 function TrmnlDisplay:finalizeFetchSuccess(image_path)
-    self:displayImage(image_path)
+    -- NOTE: the user can put the device to sleep while a fetch runs; never draw over the sleep screen.
+    if self:sleepModeActive() and Device.screen_saver_mode then
+        logger.info("TRMNL: Device went to sleep during the fetch, not drawing")
+    else
+        self:displayImage(image_path)
+    end
     logger.info("TRMNL: Fetch and display completed successfully")
 
     self:showSuccess("Screen updated successfully")
@@ -781,9 +858,13 @@ Main workflow - fetches screen from API and displays it.
 
 Called by user action, auto-refresh timer, or network availability callback.
 Uses pipeline pattern for clear flow control and early exits on errors.
+
+@tparam boolean after_wake true when the device just woke up in sleep mode
 ]]
-function TrmnlDisplay:fetchAndDisplay()
+function TrmnlDisplay:fetchAndDisplay(after_wake)
     logger.info("TRMNL: Starting fetch and display cycle")
+    -- A new fetch replaces any fetch still waiting for Wi-Fi after a wake.
+    self.wake_fetch = nil
 
     -- NOTE: a failed Wi-Fi connection never runs the callback, so the retry is booked before trying.
     -- A successful fetch replaces it with the normal refresh.
@@ -792,11 +873,119 @@ function TrmnlDisplay:fetchAndDisplay()
         local retry_delay = self.retry_manager:increment()
         logger.info("TRMNL: Retry booked in", retry_delay, "seconds in case this attempt fails")
         UIManager:scheduleIn(retry_delay, self.refresh_task)
+        self.next_refresh_epoch = os.time() + retry_delay
     end
 
-    NetworkMgr:runWhenConnected(function()
+    local fetch = function()
         self:_doFetchAndDisplay()
+    end
+    if after_wake and self:sleepModeActive() and Device:hasWifiRestore() then
+        -- NOTE: wait until every Resume handler has run, so a Wi-Fi restore KOReader starts is already pending.
+        UIManager:nextTick(function()
+            self:connectAfterWake(fetch)
+        end)
+    else
+        NetworkMgr:runWhenConnected(fetch)
+    end
+end
+
+--[[--
+Get Wi-Fi back after a wake in sleep mode, then run the callback.
+
+KOReader's usual connection scans once and turns Wi-Fi off when the scan is empty.
+On a Kindle, right after a wake, the scan is often empty because wifid is not ready yet.
+Wi-Fi then stays off for every later attempt. Instead, restore Wi-Fi the way
+KOReader does on resume: enable it, then poll for a connection for up to 45 s without scanning.
+
+Another plugin can cancel that check and start its own. KOSync does this 1 s after
+a resume when Wi-Fi is not up yet. Every check broadcasts NetworkConnected when it
+succeeds, so onNetworkConnected also runs the callback. It runs only once.
+
+KOSync's request can also scan. That early, the scan finds nothing, and KOReader then
+turns Wi-Fi off and cancels every check without an event. Marking a connection as
+pending makes such a request return at once. A guard task also checks every few
+seconds that a check still runs, and restores Wi-Fi again if it does not.
+]]
+function TrmnlDisplay:connectAfterWake(callback)
+    if NetworkMgr:isConnected() then
+        callback()
+        return
+    end
+    self.wake_fetch = callback
+    self.wifi_restores = 1
+    if NetworkMgr.pending_connectivity_check then
+        -- KOReader already enabled Wi-Fi on resume. Replace its check so ours runs the fetch.
+        logger.info("TRMNL: Waiting for the Wi-Fi restore KOReader started")
+        NetworkMgr:unscheduleConnectivityCheck()
+        self:watchWakeWifi(false)
+    else
+        logger.info("TRMNL: Restoring Wi-Fi in the background after the wake")
+        self:watchWakeWifi(true)
+    end
+    UIManager:unschedule(self.wifi_guard_task)
+    UIManager:scheduleIn(self.CONSTANTS.SLEEP.WIFI_GUARD_SECONDS, self.wifi_guard_task)
+end
+
+--[[--
+Start a connectivity check that runs the wake fetch, after a restore if asked.
+
+@tparam boolean restore true to enable Wi-Fi first
+]]
+function TrmnlDisplay:watchWakeWifi(restore)
+    -- NOTE: while this is true, KOReader's requestToTurnOnWifi returns EBUSY instead of scanning.
+    -- The connectivity check sets it back to false when it succeeds or gives up.
+    NetworkMgr.pending_connection = true
+    if restore then
+        NetworkMgr:restoreWifiAsync()
+    end
+    NetworkMgr:scheduleConnectivityCheck(function()
+        self:runWakeFetch()
     end)
+end
+
+--[[--
+Guard task: while a wake fetch waits, make sure a connectivity check still runs.
+]]
+function TrmnlDisplay:checkWakeWifi()
+    if not self.wake_fetch then
+        return
+    end
+    if not NetworkMgr.pending_connectivity_check then
+        if NetworkMgr:isConnected() then
+            logger.info("TRMNL: Wi-Fi is up but its check was cancelled, running the fetch")
+            self:runWakeFetch()
+            return
+        end
+        if self.wifi_restores >= self.CONSTANTS.SLEEP.WIFI_RESTORES then
+            logger.warn("TRMNL: Wi-Fi restore was cancelled", self.wifi_restores, "times, giving up")
+            return
+        end
+        self.wifi_restores = self.wifi_restores + 1
+        logger.warn("TRMNL: Wi-Fi restore was cancelled, restoring it again")
+        self:watchWakeWifi(true)
+    end
+    UIManager:scheduleIn(self.CONSTANTS.SLEEP.WIFI_GUARD_SECONDS, self.wifi_guard_task)
+end
+
+--[[--
+Run the fetch that waits for Wi-Fi after a wake, if one still waits.
+]]
+function TrmnlDisplay:runWakeFetch()
+    local fetch = self.wake_fetch
+    if fetch then
+        self.wake_fetch = nil
+        fetch()
+    end
+end
+
+--[[--
+Wi-Fi is up. Whichever connectivity check brought it back, run the waiting wake fetch.
+]]
+function TrmnlDisplay:onNetworkConnected()
+    if self.wake_fetch then
+        logger.info("TRMNL: Wi-Fi is back, running the fetch that waited for it")
+        self:runWakeFetch()
+    end
 end
 
 --[[--
@@ -846,6 +1035,147 @@ function TrmnlDisplay:_performFetch()
 end
 
 --============================================================================--
+-- Sleep Between Refreshes
+--
+-- On Kindles with a wake alarm (KOReader's WakeupMgr), the device can suspend
+-- after each screen. The alarm brings it back for the next fetch.
+--============================================================================--
+
+--[[--
+Whether this device has a wake alarm KOReader can set.
+]]
+function TrmnlDisplay:sleepModeAvailable()
+    -- NOTE: Kobo has a wake alarm too, but only Kindle's power driver can leave the sleep screen.
+    return Device:isKindle()
+        and Device.wakeup_mgr ~= nil
+        and Device.powerd ~= nil
+        and Device.powerd.toggleSuspend ~= nil
+end
+
+--[[--
+Whether the dashboard is running in sleep-between-refreshes mode.
+]]
+function TrmnlDisplay:sleepModeActive()
+    return self:sleepModeAvailable()
+        and self.settings.sleep_between_refreshes == true
+        and self.auto_refresh_enabled == true
+end
+
+--[[--
+Turn sleeping between refreshes on or off.
+]]
+function TrmnlDisplay:setSleepBetweenRefreshes(enabled)
+    self.settings.sleep_between_refreshes = enabled
+    self:saveSettings()
+    if not enabled and self:sleepModeAvailable() then
+        self:cancelSleepCycle()
+        if self.auto_refresh_enabled then
+            self:scheduleNextRefresh()
+        end
+    end
+end
+
+--[[--
+Seconds until the wake alarm should fire.
+
+Never less than MIN_ALARM, so a refresh that is already due still gets an alarm.
+On Kindles that hibernate, capped below the hibernation delay, because the
+alarm may not survive hibernation.
+]]
+function TrmnlDisplay:alarmDelay(now)
+    local sleep = self.CONSTANTS.SLEEP
+    local delay = sleep.MIN_ALARM
+    if self.next_refresh_epoch then
+        delay = math.max(sleep.MIN_ALARM, self.next_refresh_epoch - now)
+    end
+    if Device.canDeepSleep and Device.hibernationDelay then
+        delay = math.min(delay, Device.hibernationDelay - sleep.HIBERNATION_MARGIN)
+    end
+    return delay
+end
+
+function TrmnlDisplay:armWakeAlarm()
+    Device.wakeup_mgr:removeTasks(nil, self.wake_alarm_task)
+    local delay = self:alarmDelay(os.time())
+    logger.info("TRMNL: Wake alarm set for", delay, "seconds from now")
+    Device.wakeup_mgr:addTask(delay, self.wake_alarm_task)
+end
+
+function TrmnlDisplay:disarmWakeAlarm()
+    if Device.wakeup_mgr then
+        Device.wakeup_mgr:removeTasks(nil, self.wake_alarm_task)
+    end
+end
+
+--[[--
+Ask KOReader to put the device to sleep after a delay. Replaces any earlier request.
+]]
+function TrmnlDisplay:requestSleep(delay)
+    UIManager:unschedule(self.sleep_task)
+    UIManager:scheduleIn(delay, self.sleep_task)
+end
+
+--[[--
+Go back to sleep after a fetch. If the user already put the device to sleep
+while the fetch ran, only move the wake alarm to the new refresh time.
+]]
+function TrmnlDisplay:sleepAgain(delay)
+    if Device.screen_saver_mode then
+        self:armWakeAlarm()
+    else
+        self:requestSleep(delay)
+    end
+end
+
+--[[--
+Leave the sleep screen, as the power button would. onResume then fetches.
+]]
+function TrmnlDisplay:leaveSleepScreen()
+    logger.info("TRMNL: Leaving the sleep screen to fetch the next screen")
+    self.alarm_wake_pending = true
+    Device.powerd:toggleSuspend()
+end
+
+--[[--
+The wake alarm fired. KOReader runs this about 15 s after the wake, while the
+device is still on the sleep screen.
+]]
+function TrmnlDisplay:onWakeAlarm()
+    if not self:sleepModeActive() then
+        return
+    end
+
+    local remaining = (self.next_refresh_epoch or 0) - os.time()
+    if remaining > self.CONSTANTS.SLEEP.MIN_ALARM then
+        -- An early alarm that only kept the Kindle out of hibernation.
+        -- NOTE: WakeupMgr removes the running task after this returns, so add, don't replace.
+        logger.info("TRMNL: Early wake alarm, next refresh in", remaining, "seconds")
+        Device.wakeup_mgr:addTask(self:alarmDelay(os.time()), self.wake_alarm_task)
+        return
+    end
+
+    self:leaveSleepScreen()
+end
+
+--[[--
+No screen arrived after an alarm wake. Sleep until the retry fetchAndDisplay booked.
+]]
+function TrmnlDisplay:onAlarmWakeTimeout()
+    logger.warn("TRMNL: No screen after the wake alarm, sleeping until the retry")
+    self:sleepAgain(0)
+end
+
+--[[--
+Remove the wake alarm and any pending sleep request.
+]]
+function TrmnlDisplay:cancelSleepCycle()
+    self:disarmWakeAlarm()
+    UIManager:unschedule(self.sleep_task)
+    UIManager:unschedule(self.watchdog_task)
+    self.alarm_wake_pending = false
+end
+
+--============================================================================--
 -- Auto-Refresh Control
 --
 -- These methods start/stop the automatic refresh cycle.
@@ -872,6 +1202,7 @@ function TrmnlDisplay:startAutoRefresh()
     self:unscheduleRefreshTask()
 
     self.auto_refresh_enabled = true
+    self.keepalive_warned = false
     self:saveSettings()                 -- Persist across KOReader restarts
 
     self:showProgress("Starting auto-refresh...", "Fetching first screen")
@@ -902,6 +1233,9 @@ function TrmnlDisplay:stopAutoRefresh()
 
     -- NOTE: Unschedule first to ensure clean state
     self:unscheduleRefreshTask()
+    if self:sleepModeAvailable() then
+        self:cancelSleepCycle()
+    end
 
     self.auto_refresh_enabled = false
     self:saveSettings() -- Persist across KOReader restarts
@@ -929,6 +1263,16 @@ Device is suspending (going to sleep).
 Unschedule refresh task to prevent it running during sleep.
 ]]
 function TrmnlDisplay:onSuspend()
+    if self:sleepModeActive() then
+        -- NOTE: the refresh timer stays booked; it covers a sleep screen that never suspends.
+        UIManager:unschedule(self.sleep_task)
+        UIManager:unschedule(self.watchdog_task)
+        UIManager:unschedule(self.wifi_guard_task)
+        self.wake_fetch = nil
+        self:armWakeAlarm()
+        return
+    end
+
     if self.auto_refresh_enabled then
         self:unscheduleRefreshTask()
     end
@@ -946,6 +1290,20 @@ network events and connection UI popups. The WiFi will be auto-restored and we'l
 wait for the next scheduled refresh instead.
 ]]
 function TrmnlDisplay:onResume()
+    if self:sleepModeActive() then
+        self:disarmWakeAlarm()
+        UIManager:unschedule(self.sleep_task)
+        self.wake_kind = self.alarm_wake_pending and "alarm" or "user"
+        self.alarm_wake_pending = false
+        logger.info("TRMNL: Woke up by", self.wake_kind == "alarm" and "the wake alarm" or "the user")
+        if self.wake_kind == "alarm" then
+            UIManager:scheduleIn(self.CONSTANTS.SLEEP.WATCHDOG_SECONDS, self.watchdog_task)
+        end
+        self:unscheduleRefreshTask()
+        self:fetchAndDisplay(true)
+        return
+    end
+
     if Device:hasWifiRestore() and NetworkMgr.wifi_was_on and
         G_reader_settings:isTrue("auto_restore_wifi") then
         if self.auto_refresh_enabled then
@@ -973,6 +1331,9 @@ Clean up:
 function TrmnlDisplay:onCloseWidget()
     logger.dbg("TRMNL: Plugin closing")
     self:stopAutoRefresh()
+    if self:sleepModeAvailable() then
+        self:cancelSleepCycle()
+    end
     if self.image_widget then
         UIManager:close(self.image_widget)
         self.image_widget = nil
@@ -1169,6 +1530,27 @@ function TrmnlDisplay:createNotificationsToggle()
     )
 end
 
+function TrmnlDisplay:createSleepModeToggle()
+    local item = self:createToggleMenuItem(
+        "Stop sleeping between refreshes",
+        "Sleep between refreshes",
+        function() return self.settings.sleep_between_refreshes == true end,
+        function()
+            local enabled = self.settings.sleep_between_refreshes ~= true
+            self:setSleepBetweenRefreshes(enabled)
+            if enabled and PluginShare.keepalive then
+                return "Turn off Keep alive in Tools > More tools, or the device cannot sleep between refreshes."
+            end
+            return enabled
+                and "The device will sleep after each screen. Keep alive must be off."
+                or "The device stays awake between refreshes."
+        end
+    )
+    item.enabled_func = function() return self:sleepModeAvailable() end
+    item.help_text = _("Kindle only: the device sleeps after each screen and a wake alarm brings it back for the next one. Needs Keep alive off.")
+    return item
+end
+
 --============================================================================--
 -- Menu Integration
 --============================================================================--
@@ -1185,6 +1567,7 @@ function TrmnlDisplay:addToMainMenu(menu_items)
             self:createConfigMenuItem(),
             self:createAutoRefreshToggle(),
             self:createNotificationsToggle(),
+            self:createSleepModeToggle(),
             {
                 text = _("Dashboard gestures"),
                 sub_item_table = {

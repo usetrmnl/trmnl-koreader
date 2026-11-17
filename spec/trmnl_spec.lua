@@ -465,4 +465,760 @@ describe("TRMNL display plugin", function()
             assert.same({ "notes.png" }, files_in(data_dir))
         end)
     end)
+
+    describe("sleep between refreshes", function()
+        local Device, UIManager
+
+        setup(function()
+            Device = require("device")
+            UIManager = require("ui/uimanager")
+        end)
+
+        local function fake_wakeup_mgr()
+            local mgr = {}
+            mgr.addTask = spy.new(function() end)
+            mgr.removeTasks = spy.new(function() end)
+            return mgr
+        end
+
+        local real_toggle_suspend
+
+        before_each(function()
+            Device.wakeup_mgr = fake_wakeup_mgr()
+            stub(os, "time", 1000)
+            stub(Device, "isKindle", true)
+            -- Only Kindle's power driver has it; the emulator's does not.
+            real_toggle_suspend = Device.powerd.toggleSuspend
+            Device.powerd.toggleSuspend = function() end
+        end)
+
+        after_each(function()
+            Device.wakeup_mgr = nil
+            os.time:revert()
+            Device.isKindle:revert()
+            Device.powerd.toggleSuspend = real_toggle_suspend
+            Device.screen_saver_mode = false
+        end)
+
+        local function instance(settings, running)
+            local merged = require("util").tableDeepCopy(TrmnlDisplay.default_settings)
+            for key, value in pairs(settings or {}) do merged[key] = value end
+            local i = setmetatable({
+                settings = merged,
+                auto_refresh_enabled = running or false,
+                saveSettings = function() end,
+                refresh_task = function() end,
+            }, { __index = TrmnlDisplay })
+            i:createSleepTasks()
+            return i
+        end
+
+        it("is off by default", function()
+            assert.is_false(TrmnlDisplay.default_settings.sleep_between_refreshes)
+        end)
+
+        it("is unavailable without a wake alarm", function()
+            Device.wakeup_mgr = nil
+            assert.is_false(instance():sleepModeAvailable())
+        end)
+
+        it("is available with a wake alarm", function()
+            assert.is_true(instance():sleepModeAvailable())
+        end)
+
+        it("is unavailable on a non-Kindle with a wake alarm, such as a Kobo", function()
+            Device.isKindle:revert()
+            stub(Device, "isKindle", false)
+            assert.is_false(instance():sleepModeAvailable())
+        end)
+
+        it("is unavailable when the power driver cannot leave the sleep screen", function()
+            Device.powerd.toggleSuspend = nil
+            assert.is_false(instance():sleepModeAvailable())
+        end)
+
+        it("stays inactive on a device without a wake alarm even if the setting is on", function()
+            Device.wakeup_mgr = nil
+            assert.is_false(instance({ sleep_between_refreshes = true }, true):sleepModeActive())
+        end)
+
+        it("is active only with the setting on and the dashboard running", function()
+            assert.is_true(instance({ sleep_between_refreshes = true }, true):sleepModeActive())
+            assert.is_false(instance({ sleep_between_refreshes = true }, false):sleepModeActive())
+            assert.is_false(instance({ sleep_between_refreshes = false }, true):sleepModeActive())
+        end)
+
+        it("greys out the menu item without a wake alarm", function()
+            Device.wakeup_mgr = nil
+            assert.is_false(instance():createSleepModeToggle().enabled_func())
+        end)
+
+        it("saves the choice from the menu", function()
+            local i = instance()
+            stub(UIManager, "show")
+            i:createSleepModeToggle().callback()
+            UIManager.show:revert()
+            assert.is_true(i.settings.sleep_between_refreshes)
+        end)
+
+        local function queued(task)
+            for _, item in ipairs(UIManager._task_queue) do
+                if item.action == task then return item.time end
+            end
+        end
+
+        local function clear_queue(i)
+            for _, task in ipairs({ i.refresh_task, i.wake_alarm_task, i.sleep_task, i.watchdog_task, i.wifi_guard_task }) do
+                UIManager:unschedule(task)
+            end
+        end
+
+        describe("arming the wake alarm", function()
+            after_each(function()
+                Device.canDeepSleep, Device.hibernationDelay = nil, nil
+            end)
+
+            it("records when the next refresh is due", function()
+                local i = instance({ sleep_between_refreshes = true, refresh_interval = 900 }, true)
+                stub(i, "requestSleep")
+                i:scheduleNextRefresh()
+                clear_queue(i)
+                assert.is_equal(1900, i.next_refresh_epoch)
+            end)
+
+            it("records when a retry is due", function()
+                local NetworkMgr = require("ui/network/manager")
+                stub(NetworkMgr, "runWhenConnected")
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.retry_manager = { increment = function() return 120 end }
+                i:fetchAndDisplay()
+                NetworkMgr.runWhenConnected:revert()
+                clear_queue(i)
+                assert.is_equal(1120, i.next_refresh_epoch)
+            end)
+
+            it("arms the alarm for the next refresh when the Kindle sleeps", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1900
+                i:onSuspend()
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.addTask).was_called_with(Device.wakeup_mgr, 900, i.wake_alarm_task)
+            end)
+
+            it("replaces an earlier alarm instead of adding a second one", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1900
+                i:onSuspend()
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.removeTasks).was_called_with(Device.wakeup_mgr, nil, i.wake_alarm_task)
+            end)
+
+            it("waits at least a minute when the refresh is already due", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 990
+                assert.is_equal(60, i:alarmDelay(1000))
+            end)
+
+            it("waits a minute when no refresh was booked yet", function()
+                assert.is_equal(60, instance({ sleep_between_refreshes = true }, true):alarmDelay(1000))
+            end)
+
+            it("wakes before the Kindle hibernates", function()
+                Device.canDeepSleep, Device.hibernationDelay = true, 3600
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1000 + 8 * 3600
+                assert.is_equal(3480, i:alarmDelay(1000))
+            end)
+
+            it("keeps the backup refresh booked while asleep", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1900
+                UIManager:scheduleIn(900, i.refresh_task)
+                i:onSuspend()
+                local kept = queued(i.refresh_task)
+                clear_queue(i)
+                assert.is_not_nil(kept)
+            end)
+
+            it("arms no alarm with the setting off", function()
+                local i = instance({ sleep_between_refreshes = false }, true)
+                i.next_refresh_epoch = 1900
+                i:onSuspend()
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.addTask).was_not_called()
+            end)
+        end)
+
+        describe("waking up", function()
+            before_each(function()
+                stub(Device.powerd, "toggleSuspend")
+            end)
+
+            after_each(function()
+                Device.powerd.toggleSuspend:revert()
+                Device.screen_saver_mode = false
+            end)
+
+            it("leaves the sleep screen when the alarm is due", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1010
+                i:onWakeAlarm()
+                assert.stub(Device.powerd.toggleSuspend).was_called()
+                assert.is_true(i.alarm_wake_pending)
+            end)
+
+            it("goes back to sleep after an early wake that only avoided hibernation", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.next_refresh_epoch = 1000 + 4 * 3600
+                i:onWakeAlarm()
+                assert.stub(Device.powerd.toggleSuspend).was_not_called()
+                assert.spy(Device.wakeup_mgr.addTask).was_called()
+            end)
+
+            it("fetches on an alarm wake and starts the watchdog", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.alarm_wake_pending = true
+                stub(i, "fetchAndDisplay")
+                i:onResume()
+                local watchdog = queued(i.watchdog_task)
+                clear_queue(i)
+                assert.is_equal("alarm", i.wake_kind)
+                assert.is_false(i.alarm_wake_pending)
+                assert.stub(i.fetchAndDisplay).was_called()
+                assert.is_not_nil(watchdog)
+            end)
+
+            it("removes the queued alarm when the user wakes the Kindle", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                stub(i, "fetchAndDisplay")
+                i:onResume()
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.removeTasks).was_called_with(Device.wakeup_mgr, nil, i.wake_alarm_task)
+            end)
+
+            it("fetches at once when the user wakes the Kindle, even with Wi-Fi restore on", function()
+                stub(Device, "hasWifiRestore", true)
+                local NetworkMgr = require("ui/network/manager")
+                local wifi_was_on, auto_restore = NetworkMgr.wifi_was_on, G_reader_settings:readSetting("auto_restore_wifi")
+                NetworkMgr.wifi_was_on = true
+                G_reader_settings:saveSetting("auto_restore_wifi", true)
+                local i = instance({ sleep_between_refreshes = true }, true)
+                stub(i, "fetchAndDisplay")
+                i:onResume()
+                Device.hasWifiRestore:revert()
+                NetworkMgr.wifi_was_on = wifi_was_on
+                G_reader_settings:saveSetting("auto_restore_wifi", auto_restore)
+                local watchdog = queued(i.watchdog_task)
+                clear_queue(i)
+                assert.is_equal("user", i.wake_kind)
+                assert.stub(i.fetchAndDisplay).was_called()
+                assert.is_nil(watchdog)
+            end)
+
+            it("wakes the Kindle itself when it shows the sleep screen without suspending", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                stub(i, "fetchAndDisplay")
+                Device.screen_saver_mode = true
+                i.refresh_task()
+                assert.stub(Device.powerd.toggleSuspend).was_called()
+                assert.stub(i.fetchAndDisplay).was_not_called()
+            end)
+
+            it("fetches as before when the backup refresh fires while awake", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                stub(i, "fetchAndDisplay")
+                i.refresh_task()
+                assert.stub(i.fetchAndDisplay).was_called()
+            end)
+
+            describe("getting Wi-Fi back", function()
+                local NetworkMgr
+                local pending, pending_connection
+
+                before_each(function()
+                    NetworkMgr = require("ui/network/manager")
+                    pending, pending_connection = NetworkMgr.pending_connectivity_check, NetworkMgr.pending_connection
+                    NetworkMgr.pending_connectivity_check = false
+                    NetworkMgr.pending_connection = false
+                    stub(NetworkMgr, "isConnected", false)
+                    stub(NetworkMgr, "restoreWifiAsync")
+                    stub(NetworkMgr, "scheduleConnectivityCheck", function()
+                        NetworkMgr.pending_connectivity_check = true
+                    end)
+                    stub(NetworkMgr, "unscheduleConnectivityCheck")
+                    stub(NetworkMgr, "runWhenConnected")
+                    stub(Device, "hasWifiRestore", true)
+                    -- Run deferred work at once, so each example sees its effect.
+                    stub(UIManager, "nextTick", function(_, action) action() end)
+                end)
+
+                after_each(function()
+                    NetworkMgr.pending_connectivity_check = pending
+                    NetworkMgr.pending_connection = pending_connection
+                    NetworkMgr.isConnected:revert()
+                    NetworkMgr.restoreWifiAsync:revert()
+                    NetworkMgr.scheduleConnectivityCheck:revert()
+                    NetworkMgr.unscheduleConnectivityCheck:revert()
+                    NetworkMgr.runWhenConnected:revert()
+                    Device.hasWifiRestore:revert()
+                    UIManager.nextTick:revert()
+                end)
+
+                local function fetching_instance(settings)
+                    local i = instance(settings, true)
+                    i.retry_manager = { increment = function() return 120 end }
+                    return i
+                end
+
+                it("restores Wi-Fi in the background after a wake instead of scanning", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_called()
+                    assert.stub(NetworkMgr.scheduleConnectivityCheck).was_called()
+                    assert.stub(NetworkMgr.runWhenConnected).was_not_called()
+                    NetworkMgr.scheduleConnectivityCheck.calls[1].vals[2]()
+                    assert.spy(callback).was_called(1)
+                end)
+
+                it("fetches at once after a wake when Wi-Fi is already connected", function()
+                    NetworkMgr.isConnected:revert()
+                    stub(NetworkMgr, "isConnected", true)
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    assert.spy(callback).was_called()
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_not_called()
+                    assert.stub(NetworkMgr.scheduleConnectivityCheck).was_not_called()
+                end)
+
+                it("takes over a Wi-Fi restore KOReader already started, without restarting it", function()
+                    NetworkMgr.pending_connectivity_check = true
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    i:connectAfterWake(function() end)
+                    assert.stub(NetworkMgr.unscheduleConnectivityCheck).was_called()
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_not_called()
+                    assert.stub(NetworkMgr.scheduleConnectivityCheck).was_called()
+                end)
+
+                -- KOSync's resume handler, for one, cancels every pending check and starts its own.
+                it("fetches when a check another plugin started brings Wi-Fi back", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    i:onNetworkConnected()
+                    assert.spy(callback).was_called(1)
+                end)
+
+                it("fetches only once when both the event and its own check report Wi-Fi", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    i:onNetworkConnected()
+                    NetworkMgr.scheduleConnectivityCheck.calls[1].vals[2]()
+                    assert.spy(callback).was_called(1)
+                end)
+
+                it("ignores Wi-Fi coming back when no wake fetch waits", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    stub(i, "fetchAndDisplay")
+                    i:onNetworkConnected()
+                    assert.stub(i.fetchAndDisplay).was_not_called()
+                end)
+
+                it("drops the waiting wake fetch when the Kindle goes back to sleep", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    i:onSuspend()
+                    i:onNetworkConnected()
+                    clear_queue(i)
+                    assert.spy(callback).was_not_called()
+                end)
+
+                it("drops the waiting wake fetch when a new fetch starts", function()
+                    local i = fetching_instance({ sleep_between_refreshes = true })
+                    local callback = spy.new(function() end)
+                    i:connectAfterWake(callback)
+                    i:fetchAndDisplay()
+                    i:onNetworkConnected()
+                    clear_queue(i)
+                    assert.spy(callback).was_not_called()
+                end)
+
+                -- KOSync asks for Wi-Fi 1 s after a resume. Its scan finds nothing that early,
+                -- and KOReader then turns Wi-Fi off and cancels every check, with no event.
+                describe("when another caller turns Wi-Fi off", function()
+                    local function abort()
+                        NetworkMgr.pending_connectivity_check = false
+                        NetworkMgr.pending_connection = false
+                    end
+
+                    -- Run the guard task the way UIManager does: take it off the queue first.
+                    local function run_guard(i)
+                        UIManager:unschedule(i.wifi_guard_task)
+                        i.wifi_guard_task()
+                    end
+
+                    it("marks a connection as pending, so another caller does not start its own scan", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        clear_queue(i)
+                        assert.is_true(NetworkMgr.pending_connection)
+                    end)
+
+                    it("marks a connection as pending when it takes over KOReader's restore", function()
+                        NetworkMgr.pending_connectivity_check = true
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        clear_queue(i)
+                        assert.is_true(NetworkMgr.pending_connection)
+                    end)
+
+                    it("restores Wi-Fi again after the restore is cancelled", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        local callback = spy.new(function() end)
+                        i:connectAfterWake(callback)
+                        assert.is_not_nil(queued(i.wifi_guard_task))
+                        abort()
+                        run_guard(i)
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.stub(NetworkMgr.restoreWifiAsync).was_called(2)
+                        assert.stub(NetworkMgr.scheduleConnectivityCheck).was_called(2)
+                        assert.is_true(NetworkMgr.pending_connection)
+                        assert.is_not_nil(again)
+                        NetworkMgr.scheduleConnectivityCheck.calls[2].vals[2]()
+                        assert.spy(callback).was_called(1)
+                    end)
+
+                    it("leaves a running check alone", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        run_guard(i)
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.stub(NetworkMgr.restoreWifiAsync).was_called(1)
+                        assert.is_not_nil(again)
+                    end)
+
+                    it("fetches when Wi-Fi is up but the check was cancelled", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        local callback = spy.new(function() end)
+                        i:connectAfterWake(callback)
+                        abort()
+                        NetworkMgr.isConnected:revert()
+                        stub(NetworkMgr, "isConnected", true)
+                        run_guard(i)
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.spy(callback).was_called(1)
+                        assert.stub(NetworkMgr.restoreWifiAsync).was_called(1)
+                        assert.is_nil(again)
+                    end)
+
+                    it("stops restoring after a few tries and leaves the rest to the watchdog", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        for _ = 1, 10 do
+                            abort()
+                            if queued(i.wifi_guard_task) then run_guard(i) end
+                        end
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.stub(NetworkMgr.restoreWifiAsync).was_called(TrmnlDisplay.CONSTANTS.SLEEP.WIFI_RESTORES)
+                        assert.is_nil(again)
+                    end)
+
+                    it("stops checking once the fetch ran", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        i:onNetworkConnected()
+                        abort()
+                        run_guard(i)
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.stub(NetworkMgr.restoreWifiAsync).was_called(1)
+                        assert.is_nil(again)
+                    end)
+
+                    it("stops checking when the Kindle goes back to sleep", function()
+                        local i = instance({ sleep_between_refreshes = true }, true)
+                        i:connectAfterWake(function() end)
+                        i:onSuspend()
+                        local again = queued(i.wifi_guard_task)
+                        clear_queue(i)
+                        assert.is_nil(again)
+                    end)
+                end)
+
+                it("fetches through the background restore on an alarm wake", function()
+                    local i = fetching_instance({ sleep_between_refreshes = true })
+                    i.alarm_wake_pending = true
+                    stub(i, "_doFetchAndDisplay")
+                    i:onResume()
+                    local watchdog = queued(i.watchdog_task)
+                    local retry = queued(i.refresh_task)
+                    clear_queue(i)
+                    assert.stub(NetworkMgr.runWhenConnected).was_not_called()
+                    assert.stub(NetworkMgr.scheduleConnectivityCheck).was_called()
+                    -- KOReader gives up after 45 s. The watchdog and the booked retry then put the Kindle back to sleep.
+                    assert.is_not_nil(watchdog)
+                    assert.is_not_nil(retry)
+                    local callback = NetworkMgr.scheduleConnectivityCheck.calls[1].vals[2]
+                    callback()
+                    assert.stub(i._doFetchAndDisplay).was_called()
+                end)
+
+                it("fetches through the background restore on a user wake", function()
+                    local i = fetching_instance({ sleep_between_refreshes = true })
+                    i:onResume()
+                    clear_queue(i)
+                    assert.stub(NetworkMgr.runWhenConnected).was_not_called()
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_called()
+                end)
+
+                it("keeps KOReader's usual connection when the backup refresh fires while awake", function()
+                    local i = fetching_instance({ sleep_between_refreshes = true })
+                    i.refresh_task()
+                    clear_queue(i)
+                    assert.stub(NetworkMgr.runWhenConnected).was_called()
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_not_called()
+                end)
+
+                it("keeps KOReader's usual connection on wake with the setting off", function()
+                    Device.hasWifiRestore:revert()
+                    stub(Device, "hasWifiRestore", false)
+                    local i = fetching_instance({ sleep_between_refreshes = false })
+                    i:onResume()
+                    clear_queue(i)
+                    assert.stub(NetworkMgr.runWhenConnected).was_called()
+                    assert.stub(NetworkMgr.restoreWifiAsync).was_not_called()
+                end)
+            end)
+        end)
+
+        describe("going back to sleep", function()
+            local function after_screen(kind)
+                local i = instance({ sleep_between_refreshes = true, refresh_interval = 900 }, true)
+                i.wake_kind = kind
+                UIManager:scheduleIn(90, i.watchdog_task)
+                i:scheduleNextRefresh()
+                return i
+            end
+
+            it("sleeps right after the screen on an alarm wake", function()
+                local i = after_screen("alarm")
+                local sleep, watchdog = queued(i.sleep_task), queued(i.watchdog_task)
+                clear_queue(i)
+                assert.is_not_nil(sleep)
+                assert.is_nil(watchdog)
+            end)
+
+            it("stays awake for the grace period after a user wake", function()
+                local alarm = after_screen("alarm")
+                local alarm_sleep = queued(alarm.sleep_task)
+                clear_queue(alarm)
+                local user = after_screen("user")
+                local user_sleep = queued(user.sleep_task)
+                clear_queue(user)
+                local time = require("ui/time")
+                local gap = time.to_number(user_sleep - alarm_sleep)
+                local constants = TrmnlDisplay.CONSTANTS.SLEEP
+                assert.is_true(math.abs(gap - (constants.GRACE_SECONDS - constants.AFTER_DRAW_DELAY)) < 1)
+            end)
+
+            it("restarts the grace period with each new screen", function()
+                local i = after_screen("user")
+                i:scheduleNextRefresh()
+                local count = 0
+                for _, item in ipairs(UIManager._task_queue) do
+                    if item.action == i.sleep_task then count = count + 1 end
+                end
+                clear_queue(i)
+                assert.is_equal(1, count)
+            end)
+
+            it("goes back to sleep when an alarm wake fails", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.wake_kind = "alarm"
+                i.retry_manager = { count = 1, getDelay = function() return 120 end }
+                stub(i, "showError")
+                i:handleFetchError("Failed to fetch screen metadata")
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_not_nil(sleep)
+            end)
+
+            it("keeps the user's grace period when a fetch fails after a user wake", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.wake_kind = "user"
+                i.retry_manager = { count = 1, getDelay = function() return 120 end }
+                stub(i, "showError")
+                i:handleFetchError("Failed to fetch screen metadata")
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_nil(sleep)
+            end)
+
+            it("shows no error popup when an alarm wake fails, so none stays on the screen", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.wake_kind = "alarm"
+                i.retry_manager = { count = 1, getDelay = function() return 120 end }
+                stub(i, "showError")
+                i:handleFetchError("Failed to fetch screen metadata")
+                clear_queue(i)
+                assert.stub(i.showError).was_not_called()
+            end)
+
+            it("still shows the error popup when a fetch fails after a user wake", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.wake_kind = "user"
+                i.retry_manager = { count = 1, getDelay = function() return 120 end }
+                stub(i, "showError")
+                i:handleFetchError("Failed to fetch screen metadata")
+                clear_queue(i)
+                assert.stub(i.showError).was_called()
+            end)
+
+            it("gives up on a stuck alarm wake after the watchdog", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i:onAlarmWakeTimeout()
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_not_nil(sleep)
+            end)
+
+            it("cancels pending sleep and watchdog when the user puts it to sleep", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i:requestSleep(120)
+                UIManager:scheduleIn(90, i.watchdog_task)
+                i:onSuspend()
+                local sleep, watchdog = queued(i.sleep_task), queued(i.watchdog_task)
+                clear_queue(i)
+                assert.is_nil(sleep)
+                assert.is_nil(watchdog)
+            end)
+
+            it("never toggles the Kindle out of the sleep screen to put it to sleep", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                Device.screen_saver_mode = true
+                stub(UIManager, "suspend")
+                i.sleep_task()
+                local called = #UIManager.suspend.calls
+                UIManager.suspend:revert()
+                assert.is_equal(0, called)
+            end)
+
+            it("re-arms the alarm when a screen arrives after the user put it to sleep", function()
+                local i = instance({ sleep_between_refreshes = true, refresh_interval = 900 }, true)
+                i.wake_kind = "alarm"
+                Device.screen_saver_mode = true
+                i:scheduleNextRefresh()
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_nil(sleep)
+                assert.spy(Device.wakeup_mgr.addTask).was_called_with(Device.wakeup_mgr, 900, i.wake_alarm_task)
+            end)
+
+            it("re-arms the alarm when a fetch fails after the user put it to sleep", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.wake_kind = "alarm"
+                i.next_refresh_epoch = 1120
+                i.retry_manager = { count = 1, getDelay = function() return 120 end }
+                stub(i, "showError")
+                Device.screen_saver_mode = true
+                i:handleFetchError("Failed to fetch screen metadata")
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_nil(sleep)
+                assert.spy(Device.wakeup_mgr.addTask).was_called_with(Device.wakeup_mgr, 120, i.wake_alarm_task)
+            end)
+
+            it("does not draw over the sleep screen", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i.retry_manager = { reset = function() end }
+                stub(i, "displayImage")
+                stub(i, "showSuccess")
+                Device.screen_saver_mode = true
+                i:finalizeFetchSuccess("dashboard.png")
+                clear_queue(i)
+                assert.stub(i.displayImage).was_not_called()
+            end)
+
+            describe("with Keep alive on", function()
+                local PluginShare
+
+                setup(function()
+                    PluginShare = require("pluginshare")
+                end)
+
+                before_each(function()
+                    PluginShare.keepalive = true
+                end)
+
+                after_each(function()
+                    PluginShare.keepalive = nil
+                end)
+
+                it("says why the device cannot sleep, once", function()
+                    local i = instance({ sleep_between_refreshes = true }, true)
+                    local shown = {}
+                    i.showError = function(_, message) table.insert(shown, message) end
+                    stub(UIManager, "suspend")
+                    i.sleep_task()
+                    i.sleep_task()
+                    local suspended = #UIManager.suspend.calls
+                    UIManager.suspend:revert()
+                    assert.same({ "Keep alive is on, so the device cannot sleep. Turn it off in Tools > More tools." }, shown)
+                    assert.is_equal(0, suspended)
+                end)
+
+                it("asks to turn Keep alive off when sleep mode is turned on", function()
+                    local i = instance()
+                    local text
+                    stub(UIManager, "show", function(_, widget) text = widget.text end)
+                    i:createSleepModeToggle().callback()
+                    UIManager.show:revert()
+                    assert.truthy(text:find("Turn off Keep alive", 1, true))
+                end)
+            end)
+
+            it("does not request sleep with the setting off", function()
+                local i = instance({ sleep_between_refreshes = false }, true)
+                i:scheduleNextRefresh()
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.is_nil(sleep)
+            end)
+        end)
+
+        describe("cleanup", function()
+            it("removes the wake alarm when the dashboard stops", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i:requestSleep(120)
+                i:stopAutoRefresh()
+                local sleep = queued(i.sleep_task)
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.removeTasks).was_called_with(Device.wakeup_mgr, nil, i.wake_alarm_task)
+                assert.is_nil(sleep)
+            end)
+
+            it("removes the wake alarm and keeps refreshing when the toggle goes off", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i:setSleepBetweenRefreshes(false)
+                local refresh = queued(i.refresh_task)
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.removeTasks).was_called_with(Device.wakeup_mgr, nil, i.wake_alarm_task)
+                assert.is_not_nil(refresh)
+            end)
+
+            it("removes the wake alarm when the plugin closes", function()
+                local i = instance({ sleep_between_refreshes = true }, true)
+                i:onCloseWidget()
+                clear_queue(i)
+                assert.spy(Device.wakeup_mgr.removeTasks).was_called_with(Device.wakeup_mgr, nil, i.wake_alarm_task)
+            end)
+        end)
+    end)
 end)
